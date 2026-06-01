@@ -171,12 +171,12 @@ button:active{transform:scale(.98);}
           <button id="fs-hoh" class="sel-btn" onclick="setFS('hoh')">Head of HH</button>
         </div>
         <p class="sh">Account balances (current $)</p>
-        <div class="ig"><label>Traditional IRA ($)</label><input type="number" id="n-trad" min="0" max="99000000" step="1000" value="4350000" onchange="onN('tradIRA',+this.value)"></div>
+        <div class="ig"><label>Traditional IRA ($)</label><input type="number" id="n-trad" min="0" max="99000000" step="1000" value="1000000" onchange="onN('tradIRA',+this.value)"></div>
         <div class="ig"><label>Roth IRA ($)</label><input type="number" id="n-roth" min="0" max="99000000" step="1000" value="0" onchange="onN('rothIRA',+this.value)"></div>
         <div class="ig"><label>Brokerage / taxable ($)</label><input type="number" id="n-brok" min="0" max="99000000" step="1000" value="0" onchange="onN('brokStart',+this.value)"></div>
         <p class="sh">Annual amounts</p>
         <div class="ig"><label>Annual living expenses ($)</label><input type="number" id="n-exp" min="20000" max="1000000" step="1000" value="100000" onchange="onN('expenses',+this.value)"></div>
-        <div class="sg"><div class="slr"><label>Roth conversion target/yr</label><span class="slv" id="v-conv">$113K</span></div><input type="range" id="s-conv" min="0" max="350000" step="5000" value="113000" oninput="onConv(+this.value)"></div>
+        <div class="sg"><div class="slr"><label>Roth conversion target/yr</label><span class="slv" id="v-conv">$113K</span></div><input type="range" id="s-conv" min="0" max="350000" step="5000" value="50000" oninput="onConv(+this.value)"></div>
       </div>
       <div>
         <p class="sh">Age planning &nbsp;<span style="font-size:10px;color:var(--tx3);">&#9679; = today</span></p>
