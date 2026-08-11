@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1"><!--CCDC_SESSION_META-->
+    <meta name="color-scheme" content="light dark">
+    <title>PortfolioPilot v2.0.0</title>
+    <link rel="stylesheet" href="vendor/tabler/tabler.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="layout-fluid">
+    <div class="app-chrome">
+    <header class="navbar navbar-dark pp-header">
+        <div class="brand-label">
+            <div class="brand-mark" aria-hidden="true">P</div>
+            <div><div class="eyebrow">PORTFOLIO DECISION PLATFORM</div>
+            <h1>PortfolioPilot</h1></div>
+        </div>
+        <button id="navCollapseButton" class="nav-collapse-button" type="button" aria-label="Collapse navigation" aria-expanded="true" title="Collapse navigation"><span aria-hidden="true">‹</span></button>
+    </header>
+    <nav id="tabs" class="navbar pp-tabs" aria-label="PortfolioPilot sections"></nav>
+    <div class="sidebar-controls">
+        <div class="sidebar-control-label">Appearance</div>
+        <div class="sidebar-control-row">
+            <div id="themeSwitch" class="theme-switch" role="radiogroup" aria-label="Color theme">
+                <button type="button" data-theme-choice="auto" role="radio" aria-label="Auto theme"
+                    aria-checked="true"><span aria-hidden="true">◐</span></button>
+                <button type="button" data-theme-choice="light" role="radio" aria-label="Light theme"
+                    aria-checked="false"><span aria-hidden="true">☀︎</span></button>
+                <button type="button" data-theme-choice="dark" role="radio" aria-label="Dark theme"
+                    aria-checked="false"><span aria-hidden="true">☾</span></button>
+            </div>
+            <button id="refreshButton" class="refresh-button" type="button"
+                hidden>Refresh Data</button>
+        </div>
+        <div class="refresh-cluster">
+            <div id="refreshTime" class="muted"></div>
+            <div id="refreshStatus" class="refresh-status" aria-live="polite"></div>
+        </div>
+    </div>
+    </div>
+    <main id="content" class="page-wrapper"></main>
+    <footer class="footer">Read-only decision support. PortfolioPilot never submits, replaces, or cancels orders.</footer>
+    <script src="dashboard_data.js"></script>
+    <script src="vendor/tabler/tabler.min.js"></script>
+    <script src="demo_dates.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
