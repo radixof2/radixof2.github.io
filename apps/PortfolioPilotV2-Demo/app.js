@@ -989,7 +989,7 @@ show(start);
       nextAutomaticRefresh = Date.now() + autoRefreshMinutes * 60_000;
     const seconds = Math.max(0, Math.ceil((nextAutomaticRefresh - Date.now()) / 1000));
     const countdown = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-    setButtonText(`Refresh Data · ${countdown}`);
+    setButtonText("Refresh Data");
     button.dataset.countdown = countdown;
     button.title = `Refresh Schwab data now. Automatic market-hours refresh in ${countdown}.`;
     if (seconds === 0) {
