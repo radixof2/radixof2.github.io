@@ -180,6 +180,11 @@ function briefCalendar() {
   }).format(cursor);
   const firstWeekday = new Date(Date.UTC(year, month, 1)).getUTCDay();
   const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const earningsByDate = Object.values(D.diagnostics?.earnings_calendar || {}).reduce((events, event) => {
+    const eventDate = String(event?.event_date || "").slice(0, 10);
+    if (eventDate) (events[eventDate] ||= []).push(event);
+    return events;
+  }, {});
   const cells = [];
   for (let blank = 0; blank < firstWeekday; blank += 1)
     cells.push('<div class="calendar-day outside" aria-hidden="true"></div>');
@@ -189,15 +194,18 @@ function briefCalendar() {
       .map((position, index) => ({ position, index }))
       .filter(({ position }) => String(position.expiration).slice(0, 10) === iso)
       .sort((a, b) => (b.position.risk_score || 0) - (a.position.risk_score || 0));
-    cells.push(`<div class="calendar-day${iso === briefToday ? " today" : ""}" data-date="${iso}"><div class="calendar-date"><span>${day}</span>${iso === briefToday ? '<b>Today</b>' : ""}</div><div class="calendar-events">${entries
+    const earnings = (earningsByDate[iso] || []).sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));
+    cells.push(`<div class="calendar-day${iso === briefToday ? " today" : ""}" data-date="${iso}"><div class="calendar-date"><span>${day}</span>${iso === briefToday ? '<b>Today</b>' : ""}</div><div class="calendar-events">${earnings
+      .map((event) => `<div class="calendar-event calendar-earnings" title="${esc(event.symbol)} earnings · ${esc(event.timing || "Time unknown")} · ${esc(event.source || "Earnings calendar")}"><span><b>${esc(event.symbol)}</b> Earnings · ${esc(event.timing || "TBD")}</span></div>`)
+      .join("")}${entries
       .map(
         ({ position, index }) =>
-          `<button type="button" class="calendar-event ${cls(position.status)}${index === briefSelectedPositionIndex ? " selected" : ""}" data-position-index="${index}" title="${esc(position.symbol)} ${esc(position.expiration)} $${num(position.strike, 2)} · ${esc(position.status)}"><b>${esc(position.symbol)}</b><span>$${num(position.strike, 0)} · ${position.contracts}c</span></button>`,
+          `<button type="button" class="calendar-event ${cls(position.status)}${index === briefSelectedPositionIndex ? " selected" : ""}" data-position-index="${index}" title="${esc(position.symbol)} ${esc(position.expiration)} $${num(position.strike, 2)} · ${esc(position.status)}"><span><b>${esc(position.symbol)}</b> $${num(position.strike, 0)} · ${position.contracts}c</span></button>`,
       )
       .join("")}</div></div>`);
   }
   while (cells.length % 7) cells.push('<div class="calendar-day outside" aria-hidden="true"></div>');
-  return `<section class="section card brief-calendar" aria-labelledby="briefCalendarTitle"><div class="calendar-pane"><div class="calendar-toolbar"><h2 id="briefCalendarTitle">${esc(monthLabel)}</h2><div class="calendar-controls"><button type="button" data-calendar-action="previous" aria-label="Previous month">‹</button><button type="button" class="calendar-today-button" data-calendar-action="today">Today</button><button type="button" data-calendar-action="next" aria-label="Next month">›</button></div></div><div class="calendar-legend"><span><i class="green"></i>Wait</span><span><i class="yellow"></i>Monitor</span><span><i class="red"></i>Action</span><span><i class="gray"></i>Settlement</span></div><div class="calendar-scroll"><div class="calendar-weekdays" aria-hidden="true">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => `<span>${day}</span>`).join("")}</div><div class="calendar-grid">${cells.join("")}</div></div><p class="muted calendar-help">Select a contract to show its current guidance on the right. Colors reflect the latest refreshed status.</p></div><aside id="calendarDetail" class="calendar-detail" aria-live="polite">${briefCalendarDetail()}</aside></section>`;
+  return `<section class="section card brief-calendar" aria-labelledby="briefCalendarTitle"><div class="calendar-pane"><div class="calendar-toolbar"><h2 id="briefCalendarTitle">${esc(monthLabel)}</h2><div class="calendar-controls"><button type="button" data-calendar-action="previous" aria-label="Previous month">‹</button><button type="button" class="calendar-today-button" data-calendar-action="today">Today</button><button type="button" data-calendar-action="next" aria-label="Next month">›</button></div></div><div class="calendar-legend"><span><i class="green"></i>Wait</span><span><i class="yellow"></i>Monitor</span><span><i class="red"></i>Action</span><span><i class="gray"></i>Settlement</span><span><i class="earnings"></i>Earnings</span></div><div class="calendar-scroll"><div class="calendar-weekdays" aria-hidden="true">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => `<span>${day}</span>`).join("")}</div><div class="calendar-grid">${cells.join("")}</div></div><p class="muted calendar-help">Select a contract to show its current guidance on the right. Colors reflect the latest refreshed status.</p></div><aside id="calendarDetail" class="calendar-detail" aria-live="polite">${briefCalendarDetail()}</aside></section>`;
 }
 function bindBriefCalendar() {
   content.querySelectorAll("[data-calendar-action]").forEach((button) => {
@@ -290,6 +298,7 @@ function bindDisclosures() {
   });
 }
 const financial = (value) => `<span class="${Number(value) < 0 ? "negative-value" : ""}">${money(value)}</span>`;
+const withdrawal = (value) => financial(-Math.abs(Number(value || 0)));
 function rollTargetText() {
   let r = D.settings?.decision_rules || {};
   return `${num(r.target_roll_delta_min, 2)}–${num(r.target_roll_delta_max, 2)} delta`;
@@ -331,7 +340,7 @@ function briefDisclosure(title, body, options = {}) {
   const storageKey = disclosureKey("panel", panelId, resetToken);
   return disclosurePanel({ storageKey, defaultOpen: Boolean(options.defaultOpen ?? options.open), className: "section brief-disclosure", summary: `<span class="disclosure-title">${esc(title)}</span>${count}`, body: `<div class="brief-disclosure-body">${options.intro ? `<p class="muted section-intro">${esc(options.intro)}</p>` : ""}${body}</div>` });
 }
-function donutChart(segments, center, caption, ariaLabel, innerSegments = []) {
+function donutChart(segments, center, caption, ariaLabel) {
   const rings = (items, radius, width, prefix) => {
     let offset=0;
     return items.map((segment) => {
@@ -341,17 +350,24 @@ function donutChart(segments, center, caption, ariaLabel, innerSegments = []) {
       return circle;
     }).join("");
   };
-  return `<svg class="command-donut" viewBox="0 0 100 100" role="img" aria-label="${esc(ariaLabel)}"><circle class="donut-track" cx="50" cy="50" r="40" pathLength="100" stroke-width="10"></circle>${rings(segments,40,10,"outer")}${innerSegments.length ? `<circle class="donut-inner-track" cx="50" cy="50" r="30" pathLength="100" stroke-width="5"></circle>${rings(innerSegments,30,5,"inner")}` : ""}<text class="donut-value" x="50" y="48" text-anchor="middle">${esc(center)}</text><text class="donut-caption" x="50" y="61" text-anchor="middle">${esc(caption)}</text></svg>`;
+  return `<svg class="command-donut" viewBox="0 0 100 100" role="img" aria-label="${esc(ariaLabel)}"><circle class="donut-track" cx="50" cy="50" r="40" pathLength="100" stroke-width="10"></circle>${rings(segments,40,10,"outer")}<text class="donut-value" x="50" y="48" text-anchor="middle">${esc(center)}</text><text class="donut-caption" x="50" y="61" text-anchor="middle">${esc(caption)}</text></svg>`;
 }
 function brief() {
+  const currentMonth = briefToday.slice(0, 7);
+  const currentMonthCashFlow = (D.premium_history?.months || []).find((row) => row.month === currentMonth) || {};
+  const trailingStart = new Date(`${currentMonth}-01T12:00:00Z`);
+  trailingStart.setUTCMonth(trailingStart.getUTCMonth() - 11);
+  const trailingStartMonth = trailingStart.toISOString().slice(0, 7);
+  const trailingNetOptionCash = (D.premium_history?.months || [])
+    .filter((row) => String(row.month) >= trailingStartMonth && String(row.month) <= currentMonth)
+    .reduce((total, row) => total + Number(row.net_cash_flow ?? row.realized_premium ?? 0), 0);
   let q = S.summary || {},
     c = q.counts || {},
     hi = q.highest_risk_position,
-    monthlyPremium = q.current_month_sto_cash_received ?? D.recommendations?.current_month_sto_cash_received ?? 0,
+    monthlyPremium = currentMonthCashFlow.net_cash_flow ?? currentMonthCashFlow.realized_premium ?? 0,
     monthlyTarget = q.monthly_income_target || D.recommendations?.monthly_target || 0,
-    monthlyGap = q.current_month_target_gap ?? Math.max(monthlyTarget - monthlyPremium, 0),
+    monthlyGap = Math.max(monthlyTarget - monthlyPremium, 0),
     targetProgress = (monthlyPremium / (monthlyTarget || 1)) * 100,
-    overTargetProgress = Math.max(0, targetProgress - 100),
     monthlyOverage = Math.max(monthlyPremium - monthlyTarget, 0);
   let attention = (c.red || 0) + (c.yellow || 0),
     focus = attention
@@ -364,9 +380,12 @@ function brief() {
   const healthCount=(c.green || 0)+(c.yellow || 0)+(c.red || 0);
   const healthTotal=Math.max(1,healthCount);
   const healthSegments=[{tone:"green",value:(c.green || 0)*100/healthTotal},{tone:"yellow",value:(c.yellow || 0)*100/healthTotal},{tone:"red",value:(c.red || 0)*100/healthTotal}];
-  const premiumDonut=donutChart([{tone:"green",value:Math.min(targetProgress,100)},{tone:"red",value:Math.max(0,100-targetProgress)}],`${num(targetProgress,0)}%`,"of target",`${num(targetProgress,1)}% of monthly premium target entered`,overTargetProgress ? [{tone:"over",value:Math.min(overTargetProgress,100)}] : []);
+  const premiumSegments = targetProgress > 100
+    ? [{tone:"green",value:10000/targetProgress},{tone:"over",value:100-(10000/targetProgress)}]
+    : [{tone:"green",value:targetProgress},{tone:"red",value:100-targetProgress}];
+  const premiumDonut=donutChart(premiumSegments,`${num(targetProgress,0)}%`,"of target",`${num(targetProgress,1)}% of monthly premium target earned`);
   const healthDonut=donutChart(healthSegments,healthCount ? `${c.green || 0}/${healthCount}` : "0","healthy",`${c.green || 0} green, ${c.yellow || 0} yellow, and ${c.red || 0} red active positions`);
-  return `<div class="grid brief-grid command-brief-grid"><div class="card command-priority ${priorityState}-command"><div class="command-priority-top"><span class="label">Today’s priority</span><span class="pill ${priorityState}">${hi ? `${esc(hi.status)} · ${risk(hi.risk_score)}` : "All clear"}</span></div><div class="command-priority-main"><div><div class="command-priority-title">${priorityTitle}</div><p>${esc(priorityGuidance)}</p></div><div class="command-priority-metrics"><span><b>${hi ? hi.dte : "—"}</b>DTE</span><span><b>${hi ? num(hi.delta, 2) : "—"}</b>Delta</span><span><b>${attention}</b>Need attention</span></div></div>${tieNote}<div class="command-priority-footer"><span>${esc(focus)}</span><span>Review details below ↓</span></div></div><div class="card command-metric command-chart-card"><div class="label">Premium entered</div><div class="command-chart-body">${premiumDonut}<div class="command-chart-detail"><b>${money(monthlyPremium)}</b><span>Target ${money(monthlyTarget)}</span><span class="${monthlyOverage ? "positive-value" : "negative-value"}">${monthlyOverage ? `Above ${money(monthlyOverage)}` : `Gap ${money(monthlyGap)}`}</span></div></div></div><div class="card command-metric command-chart-card"><div class="label">Portfolio health</div><div class="command-chart-body">${healthDonut}<div class="health-pills command-chart-legend"><span class="health-pill green"><b>${c.green || 0}</b> Green</span><span class="health-pill yellow"><b>${c.yellow || 0}</b> Yellow</span><span class="health-pill red"><b>${c.red || 0}</b> Red</span></div></div></div><div class="card command-metric"><div class="label">Open contracts</div><div class="value">${q.contracts || 0}</div><div class="muted">Across ${q.open_positions || 0} positions</div></div></div>${briefCalendar()}${briefDisclosure("Action Center", actionCenter(), { open: true, count: attention, intro: "Read-only Schwab guidance. Ranked candidates appear when live option-chain access is connected." })}${briefDisclosure("Needs attention", coveredCallsTable(S.positions.filter((x) => x.status.startsWith("RED") || x.status.startsWith("YELLOW"))), { count: attention })}${briefDisclosure("No action required", coveredCallsTable(S.positions.filter((x) => x.status.startsWith("GREEN"))), { count: c.green || 0 })}${briefDisclosure("Settlement and lifecycle notices", settlementNotices(), { count: c.expired || 0, intro: "Expired contracts are no longer tradeable and do not receive a trading-risk score." })}`;
+  return `<div class="grid brief-grid command-brief-grid"><div class="card command-priority ${priorityState}-command"><div class="command-priority-top"><span class="label">Today’s priority</span><span class="pill ${priorityState}">${hi ? `${esc(hi.status)} · ${risk(hi.risk_score)}` : "All clear"}</span></div><div class="command-priority-main"><div><div class="command-priority-title">${priorityTitle}</div><p>${esc(priorityGuidance)}</p></div><div class="command-priority-metrics"><span><b>${hi ? hi.dte : "—"}</b>DTE</span><span><b>${hi ? num(hi.delta, 2) : "—"}</b>Delta</span><span><b>${attention}</b>Need attention</span></div></div>${tieNote}<div class="command-priority-footer"><span>${esc(focus)}</span><span>Review details below ↓</span></div></div><div class="card command-metric command-chart-card"><div class="label">Premium earned</div><div class="command-chart-body">${premiumDonut}<div class="command-chart-detail"><b>${money(monthlyPremium)}</b><span class="metric-target">Target ${money(monthlyTarget)}</span><span class="${monthlyOverage ? "positive-value" : "negative-value"}">${monthlyOverage ? `Above Target ${money(monthlyOverage)}` : `Gap ${money(monthlyGap)}`}</span><span class="annual-premium ${trailingNetOptionCash >= 0 ? "positive-value" : "negative-value"}">1Y: ${money(trailingNetOptionCash)}</span></div></div></div><div class="card command-metric command-chart-card"><div class="label">Portfolio health</div><div class="command-chart-body">${healthDonut}<div class="health-pills command-chart-legend"><span class="health-pill green"><b>${c.green || 0}</b> Green</span><span class="health-pill yellow"><b>${c.yellow || 0}</b> Yellow</span><span class="health-pill red"><b>${c.red || 0}</b> Red</span></div></div></div><div class="card command-metric"><div class="label">Open contracts</div><div class="value">${q.contracts || 0}</div><div class="muted">Across ${q.open_positions || 0} positions</div></div></div>${briefCalendar()}${briefDisclosure("Action Center", actionCenter(), { open: true, count: attention, intro: "Read-only Schwab guidance. Ranked candidates appear when live option-chain access is connected." })}${briefDisclosure("Needs attention", coveredCallsTable(S.positions.filter((x) => x.status.startsWith("RED") || x.status.startsWith("YELLOW"))), { count: attention })}${briefDisclosure("No action required", coveredCallsTable(S.positions.filter((x) => x.status.startsWith("GREEN"))), { count: c.green || 0 })}${briefDisclosure("Settlement and lifecycle notices", settlementNotices(), { count: c.expired || 0, intro: "Expired contracts are no longer tradeable and do not receive a trading-risk score." })}`;
 }
 function coveredCallsTable(rows = S.positions, groupByAccount = false) {
   const orderedRows = [...rows].sort((a, b) => {
@@ -728,11 +747,11 @@ function history() {
       "Price/share",
     ],
     (x) => `<tr><td>${displayDate(x.date)}</td><td><b>${esc(x.symbol)}</b></td><td>${esc(x.action)}</td><td>${x.contracts}</td><td>${expiration(x.expiration)}</td><td>${money(x.strike)}</td><td>${money(x.price)}</td></tr>`, false, "history-persistent-transactions",
-  )}</div><div class="section"><h2>Monthly option cash flow</h2><p class="muted">Gross option principal in each trade month. STO credits arrive when sell orders fill and BTC principal reduces option cash flow; reported fees are listed separately and excluded from computed totals. Expiration in a later month does not move the original credit into that month.</p>${table(
+  )}</div><div class="section"><h2>Monthly option cash flow</h2><p class="muted">Signed gross option principal in each trade month, matching Schwab’s transaction convention: STO fills are positive deposits and BTC fills are negative withdrawals. Net option cash flow is STO deposits plus BTC withdrawals. Reported fees are listed separately and excluded. Expiration in a later month does not move the original credit into that month.</p>${table(
     [
       "Month",
-      "STO cash received",
-      "BTC cash paid",
+      "STO deposits",
+      "BTC withdrawals",
       "Fees included",
       "Net option cash flow",
       "Monthly target",
@@ -740,10 +759,10 @@ function history() {
     ],
     m.map(
       (x) =>
-        `<tr><td>${esc(x.month)}</td><td>${financial(x.sto_cash_received ?? x.premium_received)}</td><td>${financial(x.btc_cash_paid ?? x.closing_costs)}</td><td>${financial(x.fees || 0)}</td><td>${financial(x.net_cash_flow ?? x.realized_premium)}</td><td>${financial(x.target)}</td><td>${pct(x.target_progress)}</td></tr>`,
+        `<tr><td>${esc(x.month)}</td><td>${financial(x.sto_cash_received ?? x.premium_received)}</td><td>${withdrawal(x.btc_cash_paid ?? x.closing_costs)}</td><td>${financial(x.fees || 0)}</td><td>${financial(x.net_cash_flow ?? x.realized_premium)}</td><td>${financial(x.target)}</td><td>${pct(x.target_progress)}</td></tr>`,
     ),
-  )}</div><div class="section"><h2>Contract outcomes finalized by month</h2><p class="muted">Lifecycle P/L is classified when Schwab confirms how contracts ended. These values explain outcomes; they are not additional cash received in that month.</p>${table(
-    ["Month", "Bought-back P/L", "Expired P/L", "Assigned P/L", "Total finalized P/L"],
+  )}</div><div class="section"><h2>Contract outcomes finalized by month</h2><p class="muted">Signed lifecycle P/L is classified when Schwab confirms how contracts ended. Positive values are retained option income; negative values are lifecycle losses where BTC cost exceeded the applicable opening STO credit. These outcomes explain contract performance and are not additional cash received in the finalization month.</p>${table(
+    ["Month", "BTC-closed lifecycle P/L", "Expired lifecycle P/L", "Assigned lifecycle P/L", "Total finalized lifecycle P/L"],
     m.filter((x) => x.finalized_pnl || x.bought_back_pnl || x.expired_pnl || x.assigned_pnl).map(
       (x) => `<tr><td>${esc(x.month)}</td><td>${financial(x.bought_back_pnl || 0)}</td><td>${financial(x.expired_pnl || 0)}</td><td>${financial(x.assigned_pnl || 0)}</td><td>${financial(x.finalized_pnl || 0)}</td></tr>`,
     ),
