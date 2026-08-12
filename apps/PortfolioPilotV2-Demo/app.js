@@ -27,6 +27,17 @@ const tabDescriptions = {
   Setup: "Operating mode, decision rules, and local application configuration.",
   Security: "Local-first safeguards and read-only brokerage boundaries.",
 };
+const tabIcons = {
+  "Morning Brief": "☀",
+  "Roll Advisor": "↻",
+  Recommendations: "★",
+  Positions: "▤",
+  History: "◷",
+  Policy: "✓",
+  Diagnostics: "⌁",
+  Setup: "⚙",
+  Security: "⛨",
+};
 const nav = document.getElementById("tabs"),
   content = document.getElementById("content");
 const navCollapseButton = document.getElementById("navCollapseButton");
@@ -863,7 +874,7 @@ tabs.forEach((t) => {
   b.type = "button";
   b.dataset.tab = t;
   b.title = t;
-  b.innerHTML = `<span class="nav-marker" aria-hidden="true">${t.split(" ").map((word) => word[0]).join("").slice(0, 2)}</span><span>${esc(t)}</span>`;
+  b.innerHTML = `<span class="nav-marker" aria-hidden="true">${esc(tabIcons[t] || "•")}</span><span>${esc(t)}</span>`;
   b.onclick = () => show(t);
   nav.appendChild(b);
 });
@@ -876,14 +887,19 @@ show(start);
 // v0.7.2 local HTTPS refresh controller. This is enabled only when served by CCDC.
 (function initLocalRefresh() {
   const button = document.getElementById("refreshButton");
+  const buttonLabel = button?.querySelector(".refresh-button-label");
   const status = document.getElementById("refreshStatus");
   const token = document.querySelector('meta[name="ccdc-csrf"]')?.content;
   if (!button || !status) return;
+  const setButtonText = (text) => {
+    if (buttonLabel) buttonLabel.textContent = text;
+    else button.textContent = text;
+  };
   if (demoMode) {
     button.hidden = false;
     button.disabled = true;
     button.classList.add("demo-data");
-    button.textContent = "Demo Data";
+    setButtonText("Demo Data");
     button.title = "Synthetic demo data; run demo.command to regenerate the rolling-date scenario.";
     setTimeout(() => {
       status.textContent = "Offline synthetic data — no Schwab connection.";
@@ -894,6 +910,10 @@ show(start);
   if (!token || location.protocol !== "https:") return;
   button.hidden = false;
   let timer = null;
+  let nextAutomaticRefresh = null;
+  let autoRefreshMinutes = 10;
+  let marketSession = "CLOSED";
+  let healthCheckDue = 0;
   const setState = (text, kind = "") => {
     status.textContent = text;
     status.className = "refresh-status " + kind;
@@ -906,13 +926,14 @@ show(start);
       const job = await response.json();
       if (job.state === "running") {
         button.disabled = true;
-        button.textContent = "Refreshing…";
+        setButtonText("Refreshing…");
+        button.removeAttribute("data-countdown");
         setState(job.phase || "Refreshing Schwab data…");
         timer = setTimeout(poll, 1000);
         return;
       }
       button.disabled = false;
-      button.textContent = "Refresh Data";
+      setButtonText("Refresh Data");
       if (job.state === "complete") {
         setState(
           `Updated successfully${job.duration_seconds != null ? " in " + job.duration_seconds + "s" : ""}. Reloading…`,
@@ -926,16 +947,19 @@ show(start);
           job.error || "Refresh failed. Review Diagnostics and logs/ccdc.log.",
           "error",
         );
+      if (job.state === "failed")
+        nextAutomaticRefresh = Date.now() + autoRefreshMinutes * 60_000;
     } catch (err) {
       button.disabled = false;
-      button.textContent = "Refresh Data";
+      setButtonText("Refresh Data");
       setState("Local PortfolioPilot server is unavailable.", "error");
     }
   };
   const startRefresh = async () => {
     if (timer) clearTimeout(timer);
     button.disabled = true;
-    button.textContent = "Starting…";
+    setButtonText("Starting…");
+    button.removeAttribute("data-countdown");
     setState("Starting secure local refresh…");
     try {
       const response = await fetch("/api/refresh", {
@@ -949,9 +973,51 @@ show(start);
       poll();
     } catch (err) {
       button.disabled = false;
-      button.textContent = "Refresh Data";
+      setButtonText("Refresh Data");
       setState(err.message || "Refresh failed.", "error");
+      nextAutomaticRefresh = Date.now() + autoRefreshMinutes * 60_000;
     }
+  };
+  const updateScheduleLabel = () => {
+    if (marketSession !== "REGULAR" || button.disabled) {
+      if (!button.disabled) setButtonText("Refresh Data");
+      button.removeAttribute("data-countdown");
+      button.title = "Refresh Schwab data now.";
+      return;
+    }
+    if (!nextAutomaticRefresh)
+      nextAutomaticRefresh = Date.now() + autoRefreshMinutes * 60_000;
+    const seconds = Math.max(0, Math.ceil((nextAutomaticRefresh - Date.now()) / 1000));
+    const countdown = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+    setButtonText(`Refresh Data · ${countdown}`);
+    button.dataset.countdown = countdown;
+    button.title = `Refresh Schwab data now. Automatic market-hours refresh in ${countdown}.`;
+    if (seconds === 0) {
+      nextAutomaticRefresh = Date.now() + autoRefreshMinutes * 60_000;
+      startRefresh();
+    }
+  };
+  const refreshMarketSession = async () => {
+    try {
+      const response = await fetch("/api/health", { cache: "no-store" });
+      if (!response.ok) return null;
+      const health = await response.json();
+      marketSession = String(health.market_session || "CLOSED");
+      autoRefreshMinutes = Math.max(1, Number(health.market_hours_auto_refresh_minutes || 10));
+      if (marketSession !== "REGULAR") nextAutomaticRefresh = null;
+      return health;
+    } catch (_) {
+      marketSession = "CLOSED";
+      return null;
+    }
+  };
+  const scheduleTick = async () => {
+    if (Date.now() >= healthCheckDue) {
+      await refreshMarketSession();
+      healthCheckDue = Date.now() + 30_000;
+    }
+    updateScheduleLabel();
+    setTimeout(scheduleTick, 1000);
   };
   button.addEventListener("click", startRefresh);
   fetch("/api/health", { cache: "no-store" })
@@ -960,6 +1026,10 @@ show(start);
       return r.json();
     })
     .then((health) => {
+      marketSession = String(health.market_session || "CLOSED");
+      autoRefreshMinutes = Math.max(1, Number(health.market_hours_auto_refresh_minutes || 10));
+      healthCheckDue = Date.now() + 30_000;
+      scheduleTick();
       if (health.refresh_on_first_page_load && health.refresh_generation === 0) {
         startRefresh();
       } else {

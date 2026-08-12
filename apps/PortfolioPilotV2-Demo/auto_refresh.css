@@ -1,0 +1,13 @@
+/* Market-hours automatic refresh countdown. */
+.nav-marker { width: 32px; height: 32px; flex-basis: 32px; font-size: 21px; line-height: 1; }
+.nav-collapsed .nav-marker { width: 40px; height: 40px; flex-basis: 40px; font-size: 26px; }
+.sidebar-controls .refresh-button { white-space: nowrap; }
+.nav-collapsed .refresh-button { position: relative; min-width: 38px; width: 38px; height: 38px; padding: 0; border-radius: 50%; font-size: 0; }
+.nav-collapsed .refresh-button .refresh-button-label { font-size: 0; }
+.nav-collapsed .refresh-button::before { content: "↻"; font-size: 17px; }
+.nav-collapsed .refresh-button[data-countdown]::after { content: attr(data-countdown); position: absolute; right: -8px; bottom: -7px; min-width: 31px; padding: 2px 4px; border: 2px solid #10283d; border-radius: 999px; background: #48a9e6; color: #fff; font-size: 8px; font-weight: 850; line-height: 1.15; letter-spacing: -.02em; box-shadow: 0 2px 5px rgba(0, 0, 0, .25); }
+@media (max-width: 900px) {
+  .nav-collapsed .refresh-button { width: auto; height: auto; min-width: 108px; padding: 7px 10px; border-radius: 8px; font-size: 12px; }
+  .nav-collapsed .refresh-button .refresh-button-label { font-size: 12px; }
+  .nav-collapsed .refresh-button::before, .nav-collapsed .refresh-button[data-countdown]::after { content: none; }
+}
