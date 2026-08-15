@@ -1,5 +1,9 @@
 const D = window.CCDC_DATA || {};
 const S = D.snapshot || { summary: {}, positions: [] };
+const PRESENTATION_SCHEMA = window.PortfolioPilotPresentationSchema || {
+  fields: {},
+  views: {},
+};
 const appVersion =
   document.querySelector('meta[name="portfolio-version"]')?.content ||
   S.app_version ||
@@ -252,18 +256,146 @@ function bindBriefCalendar() {
   });
 }
 function table(headers, rows, options = {}) {
+  const schemaName = options.schema;
+  const schemaColumns = PRESENTATION_SCHEMA.views?.[schemaName]?.columns;
+  if (!schemaName || !schemaColumns) {
+    throw new Error(`Missing presentation schema for table: ${schemaName || "unnamed"}`);
+  }
+  const missingHeaders = headers.filter(
+    (header) => !schemaColumns.some((column) => column.label === header),
+  );
+  if (missingHeaders.length) {
+    throw new Error(`Presentation schema ${schemaName} is missing columns: ${missingHeaders.join(", ")}`);
+  }
   if (!rows.length) return '<div class="empty">No records yet.</div>';
   const density = headers.length >= 8 ? " pp-table-dense" : "";
-  const overflow = options.horizontalScroll ? " pp-table-scroll" : "";
-  const columnClass = (header) => {
-    const label = String(header).toLowerCase();
-    if (/trade instruction|explanation|details|guidance|action/.test(label)) return "pp-col-wide";
-    if (/contract|description|provider|setting|factor/.test(label)) return "pp-col-roomy";
-    if (/rank|qty|quantity|contracts|dte|delta|score|risk|volume/.test(label)) return "pp-col-compact";
-    if (/date|opened|closed|expiration|strike|stock|bid|ask|credit|cost|cash|premium|target|distance/.test(label)) return "pp-col-medium";
-    return "pp-col-standard";
+  const overflow = options.horizontalScroll
+    ? " pp-table-scroll"
+    : options.contentWeightedScroll
+      ? " pp-table-content-scroll"
+      : "";
+  const schemaToken = (value) => String(value || "").replaceAll(/[^a-zA-Z0-9_-]/g, "");
+  const columnMetadata = (header) => {
+    const column = schemaColumns.find((candidate) => candidate.label === header);
+    const field = PRESENTATION_SCHEMA.fields?.[column.field] || {};
+    return { ...field, ...column };
   };
-  return `<div class="table-responsive pp-table-wrap${density}${overflow}" data-columns="${headers.length}"><table class="table table-vcenter table-hover"><colgroup>${headers.map((h) => `<col class="${columnClass(h)}">`).join("")}</colgroup><thead><tr>${headers.map((h) => `<th scope="col" class="${columnClass(h)}"><span>${h}</span></th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const columnClass = (header) => {
+    const metadata = columnMetadata(header);
+    const width = schemaToken(metadata.width || "standard");
+    const role = schemaToken(metadata.role || "value");
+    const align = schemaToken(metadata.align || "left");
+    return `pp-col-${width} pp-role-${role} pp-align-${align}`;
+  };
+  const hasResizableColumns = headers.some((header) => columnMetadata(header).resizable);
+  const resizableClass = hasResizableColumns ? " pp-table-resizable" : "";
+  const columnMarkup = (header, index) => {
+    const metadata = columnMetadata(header);
+    const key = schemaToken(metadata.key || header);
+    return `<col class="${columnClass(header)}" data-column-key="${esc(key)}" data-column-index="${index}">`;
+  };
+  const headerMarkup = (header, index) => {
+    const metadata = columnMetadata(header);
+    const key = schemaToken(metadata.key || header);
+    const resizeHandle = metadata.resizable
+      ? `<span class="column-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize ${esc(header)} column" tabindex="0" data-column-key="${esc(key)}" data-column-index="${index}" data-min-width="${Number(metadata.minWidth)}" data-max-width="${Number(metadata.maxWidth)}" title="Drag to resize; double-click to reset"></span>`
+      : "";
+    return `<th scope="col" class="${columnClass(header)}${metadata.resizable ? " pp-column-resizable" : ""}" data-column-key="${esc(key)}"><span>${header}</span>${resizeHandle}</th>`;
+  };
+  return `<div class="table-responsive pp-table-wrap${density}${overflow}${resizableClass}" data-columns="${headers.length}" data-table-schema="${esc(schemaName)}"><table class="table table-vcenter table-hover"><colgroup>${headers.map(columnMarkup).join("")}</colgroup><thead><tr>${headers.map(headerMarkup).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+}
+
+function tableColumnWidthKey(schemaName, columnKey) {
+  return `portfolioPilot.tableColumnWidth.${schemaName}.${columnKey}`;
+}
+function bindResizableTables() {
+  content.querySelectorAll(".pp-table-resizable").forEach((wrapper) => {
+    const tableElement = wrapper.querySelector("table");
+    const schemaName = wrapper.dataset.tableSchema;
+    if (!tableElement || !schemaName) return;
+    const handles = wrapper.querySelectorAll(".column-resize-handle");
+    const applyWidth = (handle, width) => {
+      const index = Number(handle.dataset.columnIndex);
+      const header = tableElement.tHead?.rows[0]?.cells[index];
+      const column = tableElement.querySelector(`col[data-column-index="${index}"]`);
+      if (!header || !column || !Number.isFinite(width)) return;
+      header.style.width = `${width}px`;
+      header.style.minWidth = `${width}px`;
+      column.style.width = `${width}px`;
+    };
+    handles.forEach((handle) => {
+      const storageKey = tableColumnWidthKey(schemaName, handle.dataset.columnKey);
+      try {
+        const saved = Number(localStorage.getItem(storageKey));
+        if (saved > 0) applyWidth(handle, saved);
+      } catch (_) {
+        // Resizing remains available when browser storage is restricted.
+      }
+      const resizeBy = (delta) => {
+        const index = Number(handle.dataset.columnIndex);
+        const header = tableElement.tHead?.rows[0]?.cells[index];
+        if (!header) return;
+        const minWidth = Number(handle.dataset.minWidth);
+        const maxWidth = Number(handle.dataset.maxWidth);
+        const width = Math.max(minWidth, Math.min(maxWidth, header.getBoundingClientRect().width + delta));
+        applyWidth(handle, width);
+        tableElement.style.minWidth = `${Math.max(wrapper.clientWidth, tableElement.scrollWidth)}px`;
+        try { localStorage.setItem(storageKey, String(Math.round(width))); } catch (_) {}
+      };
+      handle.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        const headers = [...tableElement.tHead.rows[0].cells];
+        const initialWidths = headers.map((header) => header.getBoundingClientRect().width);
+        headers.forEach((header, index) => {
+          header.style.width = `${initialWidths[index]}px`;
+          header.style.minWidth = `${initialWidths[index]}px`;
+          const column = tableElement.querySelector(`col[data-column-index="${index}"]`);
+          if (column) column.style.width = `${initialWidths[index]}px`;
+        });
+        const startX = event.clientX;
+        const startWidth = initialWidths[Number(handle.dataset.columnIndex)];
+        const startTableWidth = initialWidths.reduce((sum, width) => sum + width, 0);
+        const minWidth = Number(handle.dataset.minWidth);
+        const maxWidth = Number(handle.dataset.maxWidth);
+        document.body.classList.add("column-resizing");
+        handle.setPointerCapture?.(event.pointerId);
+        const move = (moveEvent) => {
+          const width = Math.max(minWidth, Math.min(maxWidth, startWidth + moveEvent.clientX - startX));
+          const delta = width - startWidth;
+          applyWidth(handle, width);
+          tableElement.style.width = `${startTableWidth + delta}px`;
+          tableElement.style.minWidth = `${startTableWidth + delta}px`;
+        };
+        const finish = () => {
+          handle.removeEventListener("pointermove", move);
+          handle.removeEventListener("pointerup", finish);
+          handle.removeEventListener("pointercancel", finish);
+          document.body.classList.remove("column-resizing");
+          const index = Number(handle.dataset.columnIndex);
+          const width = tableElement.tHead.rows[0].cells[index].getBoundingClientRect().width;
+          try { localStorage.setItem(storageKey, String(Math.round(width))); } catch (_) {}
+        };
+        handle.addEventListener("pointermove", move);
+        handle.addEventListener("pointerup", finish);
+        handle.addEventListener("pointercancel", finish);
+      });
+      handle.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        resizeBy(event.key === "ArrowRight" ? 16 : -16);
+      });
+      handle.addEventListener("dblclick", () => {
+        const index = Number(handle.dataset.columnIndex);
+        const header = tableElement.tHead?.rows[0]?.cells[index];
+        const column = tableElement.querySelector(`col[data-column-index="${index}"]`);
+        if (header) { header.style.width = ""; header.style.minWidth = ""; }
+        if (column) column.style.width = "";
+        tableElement.style.width = "";
+        tableElement.style.minWidth = "";
+        try { localStorage.removeItem(storageKey); } catch (_) {}
+      });
+    });
+  });
 }
 function disclosureKey(namespace, account, source) {
   const identity = `${namespace}|${account}|${source}`;
@@ -288,7 +420,7 @@ function disclosurePanel({ storageKey, defaultOpen = false, className = "", summ
   const isOpen = disclosureState(storageKey, defaultOpen);
   return `<details class="disclosure-panel ${className}" data-disclosure-key="${esc(storageKey)}"${isOpen ? " open" : ""}><summary><span class="disclosure-toggle" aria-hidden="true"></span>${summary}</summary>${body}</details>`;
 }
-function accountGroupedTable(rows, headers, renderRow, expanded = false, namespace = "accounts") {
+function accountGroupedTable(rows, headers, renderRow, expanded = false, namespace = "accounts", tableOptions = {}) {
   const groups = new Map();
   (rows || []).forEach((row) => {
     const account = row.account || row.account_name || "Unknown account";
@@ -301,7 +433,7 @@ function accountGroupedTable(rows, headers, renderRow, expanded = false, namespa
   return [...groups.values()].sort((a, b) => String(a.account).localeCompare(String(b.account)) || String(a.source).localeCompare(String(b.source))).map((group) => {
     const key = disclosureKey(namespace, group.account, group.source);
     const isOpen = disclosureState(key, expanded);
-    return disclosurePanel({ storageKey: key, defaultOpen: isOpen, className: "account-lifecycle account-disclosure", summary: `<span class="account-heading"><b>Account ${esc(maskAccount(group.account))}</b><span class="account-source">Source: ${esc(group.source)}</span></span>`, body: `<div class="account-table">${table(headers, group.rows.map(renderRow))}</div>` });
+    return disclosurePanel({ storageKey: key, defaultOpen: isOpen, className: "account-lifecycle account-disclosure", summary: `<span class="account-heading"><b>Account ${esc(maskAccount(group.account))}</b><span class="account-source">Source: ${esc(group.source)}</span></span>`, body: `<div class="account-table">${table(headers, group.rows.map(renderRow), tableOptions)}</div>` });
   }).join("");
 }
 function bindDisclosures() {
@@ -371,9 +503,8 @@ function donutChart(segments, center, caption, ariaLabel) {
   return `<svg class="command-donut" viewBox="0 0 100 100" role="img" aria-label="${esc(ariaLabel)}"><circle class="donut-track" cx="50" cy="50" r="40" pathLength="100" stroke-width="10"></circle>${rings(segments,40,10,"outer")}<text class="donut-value" x="50" y="48" text-anchor="middle">${esc(center)}</text><text class="donut-caption" x="50" y="61" text-anchor="middle">${esc(caption)}</text></svg>`;
 }
 function leadMetricSummary(leadCard, metricCards) {
-  const cards = (metricCards || []).slice(0, 6);
-  const count = Math.max(1, cards.length);
-  return `<div class="lead-metric-summary"><div class="lead-metric-card">${leadCard}</div><div class="lead-metric-grid lead-metric-grid-${count}">${cards.join("")}</div></div>`;
+  const cards = (metricCards || []).slice(0, 4);
+  return `<div class="lead-metric-summary"><div class="lead-metric-card">${leadCard}</div><div class="lead-metric-grid">${cards.join("")}</div></div>`;
 }
 function brief() {
   const currentMonth = briefToday.slice(0, 7);
@@ -414,9 +545,10 @@ function brief() {
     `<div class="card command-metric command-chart-card"><div class="label">Portfolio health</div><div class="command-chart-body">${healthDonut}<div class="health-pills command-chart-legend"><span class="health-pill green"><b>${c.green || 0}</b> Green</span><span class="health-pill yellow"><b>${c.yellow || 0}</b> Yellow</span><span class="health-pill red"><b>${c.red || 0}</b> Red</span></div></div></div>`,
     `<div class="card command-metric"><div class="label">Open contracts</div><div class="value">${q.contracts || 0}</div><div class="muted">Across ${q.open_positions || 0} positions</div></div>`,
   ];
-  return `${leadMetricSummary(leadCard, metricCards)}${briefCalendar()}${briefDisclosure("Action Center", actionCenter(), { open: true, count: attention, intro: "Read-only Schwab guidance. Ranked candidates appear when live option-chain access is connected." })}${briefDisclosure("Needs attention", coveredCallsTable(S.positions.filter((x) => x.status.startsWith("RED") || x.status.startsWith("YELLOW"))), { count: attention })}${briefDisclosure("No action required", coveredCallsTable(S.positions.filter((x) => x.status.startsWith("GREEN"))), { count: c.green || 0 })}${briefDisclosure("Settlement and lifecycle notices", settlementNotices(), { count: c.expired || 0, intro: "Expired contracts are no longer tradeable and do not receive a trading-risk score." })}`;
+  const positionTableOptions = { contentWeightedScroll: true };
+  return `${leadMetricSummary(leadCard, metricCards)}${briefCalendar()}${briefDisclosure("Action Center", actionCenter(), { open: true, count: attention, intro: "Read-only Schwab guidance. Ranked candidates appear when live option-chain access is connected." })}${briefDisclosure("Needs attention", coveredCallsTable(S.positions.filter((x) => x.status.startsWith("RED") || x.status.startsWith("YELLOW")), false, positionTableOptions), { count: attention })}${briefDisclosure("No action required", coveredCallsTable(S.positions.filter((x) => x.status.startsWith("GREEN")), false, positionTableOptions), { count: c.green || 0 })}${briefDisclosure("Settlement and lifecycle notices", settlementNotices(), { count: c.expired || 0, intro: "Expired contracts are no longer tradeable and do not receive a trading-risk score." })}`;
 }
-function coveredCallsTable(rows = S.positions, groupByAccount = false) {
+function coveredCallsTable(rows = S.positions, groupByAccount = false, tableOptions = {}) {
   const orderedRows = [...rows].sort((a, b) => {
     const aDte = Number.isFinite(Number(a.dte)) ? Number(a.dte) : Infinity;
     const bDte = Number.isFinite(Number(b.dte)) ? Number(b.dte) : Infinity;
@@ -437,12 +569,13 @@ function coveredCallsTable(rows = S.positions, groupByAccount = false) {
       "Trade Instructions",
     ];
   const renderRow = (r, showSources) => `<tr><td><b>${esc(r.symbol)}</b></td><td>${r.contracts}</td><td>${expiration(r.expiration)}</td><td>${money(r.strike)}</td><td>${r.current_price == null ? "—" : money(r.current_price)}</td><td>${num(r.delta)}</td><td>${r.dte}</td><td>${pct(r.distance_to_strike_pct)}</td><td>${risk(r.risk_score)}</td><td><span class="pill ${cls(r.status)}">${esc(r.status)}</span></td><td>${esc(r.action)}<div class="muted">${esc(r.explanation)}</div></td><td>${tradeGuide(r, true)}</td>${showSources ? `<td>${esc(r.quote_source)}<br><span class="muted">${esc(r.option_source)}</span></td>` : ""}</tr>`;
-  if (!groupByAccount) return table([...headers, "Sources"], orderedRows.map((r) => renderRow(r, true)));
+  const options = { schema: "coveredCalls", ...tableOptions };
+  if (!groupByAccount) return table([...headers, "Sources"], orderedRows.map((r) => renderRow(r, true)), options);
   const groupedRows = orderedRows.map((row) => ({
     ...row,
     source: [...new Set([row.quote_source, row.option_source].filter(Boolean))].join(" / ") || "Unknown source",
   }));
-  return accountGroupedTable(groupedRows, headers, (r) => renderRow(r, false), true, "positions-covered-calls");
+  return accountGroupedTable(groupedRows, headers, (r) => renderRow(r, false), true, "positions-covered-calls", options);
 }
 
 function weeklyOpportunitySection(symbolRecommendation) {
@@ -453,6 +586,7 @@ function weeklyOpportunitySection(symbolRecommendation) {
     ? table(
         ["Quote date", "Planned entry", "Expiration", "Qty", "Bucket", "Strike", "Delta", "Bid/share", "Expected premium", "Spread", "Score", "Risk"],
         rows.map((row) => `<tr><td>${expiration(row.quote_date)}</td><td>${expiration(row.entry_date)}</td><td>${expiration(row.expiration)}</td><td><b>1</b></td><td>${esc(row.bucket)}</td><td>${money(row.strike)}</td><td>${num(row.delta, 3)}</td><td>${money(row.bid)}</td><td>${money(row.expected_premium)}</td><td>${row.spread_pct == null ? "—" : num(row.spread_pct, 2) + "%"}</td><td><b>${num(row.score, 1)}</b></td><td>${esc(row.risk_level)}</td></tr>`),
+        { schema: "weeklyOpportunities" },
       )
     : `<div class="empty">${esc(weekly.status || "No weekly opportunities are available.")}${weekly.next_entry_date ? ` · Next review ${expiration(weekly.next_entry_date)}` : ""}</div>`;
   const capacityNotice = weekly.over_policy_by > 0
@@ -492,11 +626,13 @@ function recommendations() {
             (r) =>
               `<tr><td><b>${esc(r.bucket)}</b></td><td>${r.contracts}</td><td>${expiration(r.expiration)}</td><td>${r.dte}</td><td>${money(r.strike)}</td><td>${num(r.delta, 3)}</td><td>${money(r.bid)}</td><td>${money(r.expected_premium)}</td><td>${r.spread_pct == null ? "—" : num(r.spread_pct, 2) + "%"}</td><td><b>${num(r.score, 1)}</b></td><td>${esc(r.risk_level)}</td><td class="diag-text">${esc(r.rationale)}</td></tr>`,
           ),
+          { schema: "recommendations" },
         )}<div class="section"><h3>Illustrative monthly cadence</h3><p class="muted"><b>Review / potential execution date</b> is the first weekday after the active call is expected to expire and free its capacity. Strike and bid are today’s qualifying template—not a future quote. <b>Projected premium</b> equals today’s bid × 100 × quantity; use Refresh Data on that date to confirm the live expiration, strike, delta, and bid before deciding whether to trade.</p>${table(
           ["Review / potential execution", "Projected expiration", "DTE", "Bucket", "Qty", "Template strike", "Today’s bid/share", "Template delta", "Recommendation score", "Risk level", "Projected premium"],
           ((x.cadence_projection || {}).schedule || []).map(
             (row) => `<tr><td>${expiration(row.review_date)}</td><td>${expiration(row.projected_expiration)}</td><td>${row.dte}</td><td><b>${esc(row.bucket)}</b></td><td>${row.contracts}</td><td>${money(row.template_strike)}</td><td>${money(row.template_bid)}</td><td>${num(row.template_delta, 3)}</td><td><b>${num(row.recommendation_score, 1)}</b></td><td>${esc(row.risk_level)}</td><td>${money(row.projected_premium)}</td></tr>`,
           ),
+          { schema: "recommendationCadence" },
         )}</div>${weeklyOpportunitySection(x)}</div>`,
     )
     .join("");
@@ -521,12 +657,14 @@ function policy() {
       ([k, v]) =>
         `<tr><td><b>${esc(k)}</b></td><td>${Number(v.shares_owned || 0).toLocaleString()}</td><td>${v.max_active_contracts}</td><td>${Number(v.max_active_contracts || 0) * 100}</td><td>${num(((Number(v.max_active_contracts || 0) * 100) / Math.max(1, Number(v.shares_owned || 0))) * 100, 1)}%</td></tr>`,
     ),
+    { schema: "policySymbolLimits" },
   )}</div><div class="section"><h2>Risk distribution</h2>${table(
     ["Bucket", "Contracts", "Delta range", "Target delta"],
     buckets.map(
       (b) =>
         `<tr><td><b>${esc(b.name)}</b></td><td>${b.contracts}</td><td>${num(b.delta_min, 2)}–${num(b.delta_max, 2)}</td><td>${num(b.target_delta, 2)}</td></tr>`,
     ),
+    { schema: "policyRiskDistribution" },
   )}</div><div class="section"><h2>Scoring weights</h2>${table(
     ["Factor", "Weight"],
     [
@@ -535,6 +673,7 @@ function policy() {
       ["Liquidity", w.liquidity],
       ["Roll flexibility", w.roll_flexibility],
     ].map((x) => `<tr><td>${esc(x[0])}</td><td>${num(x[1], 0)}%</td></tr>`),
+    { schema: "policyWeights" },
   )}</div>`;
 }
 
@@ -557,7 +696,7 @@ function rollCandidateTable(r, candidates) {
       const submitted=submittedRollLimit(order);
       return `<tr class="${order ? "candidate-has-open-order" : ""}"><td>${i + 1}${i === 0 ? " · Best" : ""}${sub(`Order ${esc(order?.order_id || "—")}`)}</td><td>${c.quantity ?? r.contracts}</td><td>BTC ${expiration(r.expiration)} · ${money(r.strike)}</td><td>${money(c.current_buyback_ask)}</td><td>STO ${expiration(c.expiration)} · ${money(c.strike)}</td><td>${money(c.bid)}</td><td>${money(c.replacement_sto_premium_total)}</td><td><b>${money(c.combined_limit_credit ?? c.net_credit)}</b>${sub(submitted == null ? "Order limit —" : `<b>${financial(submitted)}</b>`)}</td><td><b>${money(c.combined_limit_credit_total ?? c.net_credit_total)}</b>${sub(submitted == null ? "Order credit —" : financial(submitted*100*order.contracts))}</td><td>${num(c.delta)}</td><td>${num(c.open_interest, 0)}</td><td>${num(c.volume, 0)}</td><td>${esc(c.assignment_risk)}</td><td><b>${num(c.score, 1)}</b></td></tr>`;
     }),
-    { horizontalScroll: true },
+    { horizontalScroll: true, schema: "rollCandidates" },
   );
 }
 function rejectedRollTable(r, rejected) {
@@ -570,7 +709,7 @@ function rejectedRollTable(r, rejected) {
       const submitted=submittedRollLimit(order);
       return `<tr class="${order ? "candidate-has-open-order" : ""}"><td>${i + 1}${sub(`Order ${esc(order?.order_id || "—")}`)}</td><td>${c.quantity ?? r.contracts}</td><td>BTC ${expiration(r.expiration)} · ${money(r.strike)}</td><td>${money(c.current_buyback_ask)}</td><td>STO ${expiration(c.expiration)} · ${money(c.strike)}</td><td>${money(c.bid)}</td><td>${money(c.replacement_sto_premium_total)}</td><td><b>${financial(c.combined_limit_credit ?? c.net_credit)}</b>${sub(submitted == null ? "Order limit —" : `<b>${financial(submitted)}</b>`)}</td><td><b>${financial(c.combined_limit_credit_total ?? c.net_credit_total)}</b>${sub(submitted == null ? "Order credit —" : financial(submitted*100*order.contracts))}</td><td>${num(c.delta)}</td><td>${num(c.open_interest, 0)}</td><td>${num(c.volume, 0)}</td><td>${esc(c.assignment_risk)}</td><td><b>${num(c.score, 1)}</b></td></tr>`;
     }),
-    { horizontalScroll: true },
+    { horizontalScroll: true, schema: "rollCandidates" },
   )}`;
 }
 function rollAdvisor() {
@@ -630,6 +769,7 @@ function providerStatusTable() {
       (x) =>
         `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.role || "")}</td><td>${x.enabled ? "Yes" : "No"}</td><td><span class="pill ${x.enabled ? "green" : "gray"}">${esc(x.status || "")}</span></td><td>${esc(x.last_attempt || "—")}</td><td>${esc(x.details || "")}</td></tr>`,
     ),
+    { schema: "providerStatus" },
   );
 }
 function diagnostics() {
@@ -659,6 +799,7 @@ function diagnostics() {
         ) || {};
       return `<tr><td><b>${esc(x.symbol)}</b></td><td>${expiration(x.expiration)}</td><td>${money(x.strike)}</td><td>${esc(x.quote_source)}</td><td>${p.current_price == null ? "—" : money(p.current_price)}</td><td>${esc(x.option_source)}</td><td>${num(p.delta)}</td><td class="diag-text">${esc(x.quote_attempts || "")}</td><td class="diag-text">${esc(x.option_attempts || "")}</td></tr>`;
     }),
+    { schema: "marketResolution" },
   )}</div>`;
 }
 function rollContractKey(account, symbol, expirationDate, strike) {
@@ -783,7 +924,7 @@ function history() {
       "Fill price",
       "Status",
     ],
-    (x) => `<tr><td>${displayDate(x.date)}</td><td><b>${esc(x.symbol)}</b></td><td>${esc(x.action)}</td><td>${x.contracts}</td><td>${expiration(x.expiration)}</td><td>${money(x.strike)}</td><td>${money(x.price)}</td><td>${esc(x.status)}</td></tr>`, false, "history-recent-activity",
+    (x) => `<tr><td>${displayDate(x.date)}</td><td><b>${esc(x.symbol)}</b></td><td>${esc(x.action)}</td><td>${x.contracts}</td><td>${expiration(x.expiration)}</td><td>${money(x.strike)}</td><td>${money(x.price)}</td><td>${esc(x.status)}</td></tr>`, false, "history-recent-activity", { schema: "recentOptionActivity" },
   )}</div>`;
   return `${rollBlock}${activityBlock}<div class="section"><h2>Persistent option transactions</h2>${accountGroupedTable(t,
     [
@@ -795,7 +936,7 @@ function history() {
       "Strike",
       "Price/share",
     ],
-    (x) => `<tr><td>${displayDate(x.date)}</td><td><b>${esc(x.symbol)}</b></td><td>${esc(x.action)}</td><td>${x.contracts}</td><td>${expiration(x.expiration)}</td><td>${money(x.strike)}</td><td>${money(x.price)}</td></tr>`, false, "history-persistent-transactions",
+    (x) => `<tr><td>${displayDate(x.date)}</td><td><b>${esc(x.symbol)}</b></td><td>${esc(x.action)}</td><td>${x.contracts}</td><td>${expiration(x.expiration)}</td><td>${money(x.strike)}</td><td>${money(x.price)}</td></tr>`, false, "history-persistent-transactions", { schema: "optionTransactions" },
   )}</div><div class="section"><h2>Monthly option cash flow</h2><p class="muted">Signed gross option principal in each trade month, matching Schwab’s transaction convention: STO fills are positive deposits and BTC fills are negative withdrawals. Net option cash flow is STO deposits plus BTC withdrawals. Reported fees are listed separately and excluded. Expiration in a later month does not move the original credit into that month.</p>${table(
     [
       "Month",
@@ -810,11 +951,13 @@ function history() {
       (x) =>
         `<tr><td>${esc(x.month)}</td><td>${financial(x.sto_cash_received ?? x.premium_received)}</td><td>${withdrawal(x.btc_cash_paid ?? x.closing_costs)}</td><td>${financial(x.fees || 0)}</td><td>${financial(x.net_cash_flow ?? x.realized_premium)}</td><td>${financial(x.target)}</td><td>${pct(x.target_progress)}</td></tr>`,
     ),
+    { schema: "monthlyOptionCashFlow" },
   )}</div><div class="section"><h2>Contract outcomes finalized by month</h2><p class="muted">Signed lifecycle P/L is classified when Schwab confirms how contracts ended. Positive values are retained option income; negative values are lifecycle losses where BTC cost exceeded the applicable opening STO credit. These outcomes explain contract performance and are not additional cash received in the finalization month.</p>${table(
     ["Month", "BTC-closed lifecycle P/L", "Expired lifecycle P/L", "Assigned lifecycle P/L", "Total finalized lifecycle P/L"],
     m.filter((x) => x.finalized_pnl || x.bought_back_pnl || x.expired_pnl || x.assigned_pnl).map(
       (x) => `<tr><td>${esc(x.month)}</td><td>${financial(x.bought_back_pnl || 0)}</td><td>${financial(x.expired_pnl || 0)}</td><td>${financial(x.assigned_pnl || 0)}</td><td>${financial(x.finalized_pnl || 0)}</td></tr>`,
     ),
+    { schema: "finalizedOutcomes" },
   )}</div>`;
 }
 function decisionRulesTable() {
@@ -848,6 +991,7 @@ function decisionRulesTable() {
       (x) =>
         `<tr><td><span class="pill ${x[0].toLowerCase().includes("green") ? "green" : x[0].toLowerCase().includes("yellow") ? "yellow" : x[0].toLowerCase().includes("red") || x[0] == "Urgent" ? "red" : "gray"}">${esc(x[0])}</span></td><td>${esc(x[1])}</td><td>${esc(x[2])}</td></tr>`,
     ),
+    { schema: "decisionRules" },
   );
 }
 function setup() {
@@ -874,6 +1018,7 @@ function setup() {
     items.map(
       (x) => `<tr><td>${esc(x[0])}</td><td class="mono">${esc(x[1])}</td></tr>`,
     ),
+    { schema: "applicationSettings" },
   );
   return `<div class="section"><h2>Application setup</h2>${settingsTable}</div><div class="section"><h2>Decision Rules</h2><p class="muted section-intro">Current thresholds from the preserved <span class="mono">settings.decision_rules</span> configuration.</p>${decisionRulesTable()}</div>`;
 }
@@ -904,6 +1049,7 @@ function show(t) {
   content.innerHTML = `${commandStatusBar(t)}<div class="pp-page-header"><div><span class="pp-page-kicker">PortfolioPilot</span><h2>${esc(t)}</h2><p>${esc(tabDescriptions[t] || "")}</p></div><span class="pp-page-version">v${esc(appVersion)}</span></div><div class="command-surface">${views[t]()}</div>`;
   location.hash = t.replaceAll(" ", "-").toLowerCase();
   bindDisclosures();
+  bindResizableTables();
   if (t === "Morning Brief") bindBriefCalendar();
   if (t === "Roll Advisor") bindRollAdvisorRefresh();
 }
