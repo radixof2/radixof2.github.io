@@ -21,6 +21,7 @@ const tabs = [
   "Roll Advisor",
   "Recommendations",
   "Positions",
+  "Orders",
   "History",
   "Policy",
   "Diagnostics",
@@ -32,6 +33,7 @@ const tabDescriptions = {
   "Roll Advisor": "Live, linked two-leg roll candidates ranked by policy and net credit.",
   Recommendations: "New covered-call opportunities aligned with capacity and monthly goals.",
   Positions: "Current covered calls grouped by brokerage account.",
+  Orders: "Active, filled, canceled, and expired option orders from Schwab.",
   History: "Contract lifecycles, fills, rolls, and premium cash flow.",
   Policy: "The constraints and scoring rules used by the decision engines.",
   Diagnostics: "Provider connectivity, data quality, and reconciliation health.",
@@ -43,6 +45,7 @@ const tabIcons = {
   "Roll Advisor": "↻",
   Recommendations: "★",
   Positions: "▤",
+  Orders: "⇄",
   History: "◷",
   Policy: "✓",
   Diagnostics: "⌁",
@@ -960,6 +963,91 @@ function history() {
     { schema: "finalizedOutcomes" },
   )}</div>`;
 }
+function optionOrderLeg(order, leg) {
+  const contract=`${esc(leg.action)} ${esc(leg.symbol || order.symbol)} ${expiration(leg.expiration)} · ${money(leg.strike)}`;
+  return `<span class="order-leg"><b>${contract}</b><small>${Number(leg.contracts || 0)} contract${Number(leg.contracts || 0) === 1 ? "" : "s"}</small></span>`;
+}
+function orderFilterControl(name, values) {
+  const label=name === "status" ? "Status" : "Symbol";
+  return `<details class="multi-value-filter" data-order-filter="${name}"><summary><span>${label}</span><b data-filter-count>${values.length}</b></summary><div class="multi-value-filter-menu"><div class="multi-value-filter-actions"><button type="button" data-filter-action="all">All</button><button type="button" data-filter-action="clear">Clear</button></div>${values.map((value) => `<label><input type="checkbox" value="${esc(value)}" checked><span>${esc(name === "status" ? value.replaceAll("_"," ") : value)}</span></label>`).join("")}</div></details>`;
+}
+function bindOrderFilters() {
+  const filters=[...content.querySelectorAll("[data-order-filter]")];
+  if (!filters.length) return;
+  const storageKey=(name) => `portfolioPilot.orders.filter.${name}`;
+  filters.forEach((filter) => {
+    const inputs=[...filter.querySelectorAll('input[type="checkbox"]')];
+    try {
+      const stored=JSON.parse(localStorage.getItem(storageKey(filter.dataset.orderFilter)) || "null");
+      if (Array.isArray(stored)) inputs.forEach((input) => { input.checked=stored.includes(input.value); });
+    } catch (_) {
+      // All available values remain selected when saved state is unavailable.
+    }
+  });
+  const apply=() => {
+    const selected={};
+    filters.forEach((filter) => {
+      const inputs=[...filter.querySelectorAll('input[type="checkbox"]')];
+      selected[filter.dataset.orderFilter]=new Set(inputs.filter((input) => input.checked).map((input) => input.value));
+      const count=filter.querySelector("[data-filter-count]");
+      if (count) count.textContent=`${selected[filter.dataset.orderFilter].size}/${inputs.length}`;
+      try {
+        if (selected[filter.dataset.orderFilter].size === inputs.length) localStorage.removeItem(storageKey(filter.dataset.orderFilter));
+        else localStorage.setItem(storageKey(filter.dataset.orderFilter),JSON.stringify([...selected[filter.dataset.orderFilter]]));
+      } catch (_) {
+        // Filtering remains active for this view when storage is unavailable.
+      }
+    });
+    let visible=0;
+    content.querySelectorAll("tr[data-order-status]").forEach((row) => {
+      const show=selected.status.has(row.dataset.orderStatus) && selected.symbol.has(row.dataset.orderSymbol);
+      row.hidden=!show;
+      if (show) visible+=1;
+    });
+    content.querySelectorAll(".orders-account-list .account-disclosure").forEach((account) => {
+      account.hidden=!account.querySelector("tr[data-order-status]:not([hidden])");
+    });
+    const resultCount=content.querySelector("[data-order-result-count]");
+    if (resultCount) resultCount.textContent=`Showing ${visible} of ${content.querySelectorAll("tr[data-order-status]").length} orders`;
+    const empty=content.querySelector("[data-order-filter-empty]");
+    if (empty) empty.hidden=visible !== 0;
+  };
+  filters.forEach((filter) => {
+    filter.addEventListener("change",apply);
+    filter.querySelectorAll("[data-filter-action]").forEach((button) => button.addEventListener("click",() => {
+      const checked=button.dataset.filterAction === "all";
+      filter.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked=checked; });
+      apply();
+    }));
+  });
+  apply();
+}
+function orders() {
+  const optionOrders=[...(D.schwab_option_orders || D.schwab_open_option_orders || [])].sort((a,b) =>
+    Number(Boolean(b.is_open)) - Number(Boolean(a.is_open)) ||
+    String(b.entered_at || "").localeCompare(String(a.entered_at || "")) ||
+    String(a.order_id || "").localeCompare(String(b.order_id || "")));
+  const openOrders=optionOrders.filter((order) => order.is_open);
+  const canceled=optionOrders.filter((order) => order.status === "CANCELED");
+  const expired=optionOrders.filter((order) => order.status === "EXPIRED");
+  const filled=optionOrders.filter((order) => order.status === "FILLED");
+  const statuses=[...new Set(optionOrders.map((order) => String(order.status || "UNKNOWN")))].sort();
+  const symbols=[...new Set(optionOrders.map((order) => String(order.symbol || "UNKNOWN")))].sort();
+  const errors=D.schwab_activity_errors || [];
+  const metrics=`<div class="summary-cards summary-cards-4"><div class="card"><div class="label">Active orders</div><div class="value">${openOrders.length}</div><p>Accepted, queued, working, or partially filled at Schwab.</p></div><div class="card"><div class="label">Filled</div><div class="value">${filled.length}</div><p>Completed tickets in the recent order window.</p></div><div class="card"><div class="label">Canceled</div><div class="value">${canceled.length}</div><p>Tickets Schwab reports as canceled.</p></div><div class="card"><div class="label">Expired</div><div class="value">${expired.length}</div><p>Tickets Schwab reports as expired.</p></div></div>`;
+  const listing=accountGroupedTable(optionOrders,
+    ["Order","Entered","Status","Strategy","Symbol","Qty","Option Legs","Submitted Limit","Duration"],
+    (order) => {
+      const type=String(order.order_type || "").toUpperCase();
+      const rawLimit=order.limit_price == null ? null : Math.abs(Number(order.limit_price));
+      const signedLimit=rawLimit == null ? null : (type.includes("DEBIT") ? -rawLimit : rawLimit);
+      const strategy=order.strategy === "ROLL" ? "Linked roll" : order.strategy === "NEW_COVERED_CALL" ? `${order.cadence === "WEEKLY" ? "Weekly " : ""}New call` : "Option order";
+      const statusClass=order.status === "FILLED" ? "green" : order.status === "PARTIALLY_FILLED" || order.status === "CANCELED" ? "yellow" : "gray";
+      return `<tr data-order-status="${esc(String(order.status || "UNKNOWN"))}" data-order-symbol="${esc(String(order.symbol || "UNKNOWN"))}"><td class="mono">${esc(order.order_id)}</td><td><span class="order-entered-date">${displayDate(order.entered_at)}</span></td><td><span class="pill ${statusClass}">${esc(String(order.status || "Unknown").replaceAll("_"," "))}</span></td><td>${esc(strategy)}</td><td><b>${esc(order.symbol)}</b></td><td>${Number(order.contracts || 0)}</td><td><div class="order-legs">${(order.legs || []).map((leg) => optionOrderLeg(order,leg)).join('<span class="order-leg-flow" aria-hidden="true">→</span>')}</div></td><td>${signedLimit == null ? "—" : `<b>${financial(signedLimit)}</b><small class="order-limit-basis">${esc(type.replaceAll("_"," ") || "LIMIT")} / share</small>`}</td><td>${esc(String(order.duration || "—").replaceAll("_"," "))}</td></tr>`;
+    }, true, "open-option-orders", { schema:"openOrders", contentWeightedScroll:true });
+  const filters=optionOrders.length ? `<div class="order-filter-bar" aria-label="Order filters">${orderFilterControl("status",statuses)}${orderFilterControl("symbol",symbols)}<span class="order-filter-results" data-order-result-count></span></div>` : "";
+  return `${metrics}${errors.length ? `<div class="warning-box">${errors.map(esc).join("<br>")}</div>` : ""}<div class="section"><h2>Recent option orders</h2><p class="muted">Read-only Schwab order status includes active, filled, canceled, and expired tickets from the recent query window. A standalone STO creates a new covered call. A linked roll remains one combined ticket whose BTC leg closes the current contract and whose STO leg opens the replacement. Filled executions continue to drive History and premium accounting independently.</p>${filters}<div class="orders-account-list">${listing}</div><div class="empty" data-order-filter-empty hidden>No orders match the selected Status and Symbol filters.</div></div>`;
+}
 function decisionRulesTable() {
   let r = D.settings?.decision_rules || {};
   let rows = [
@@ -1031,6 +1119,7 @@ const views = {
   Recommendations: recommendations,
   "Roll Advisor": rollAdvisor,
   Positions: positions,
+  Orders: orders,
   History: history,
   Policy: policy,
   Diagnostics: diagnostics,
@@ -1050,6 +1139,7 @@ function show(t) {
   location.hash = t.replaceAll(" ", "-").toLowerCase();
   bindDisclosures();
   bindResizableTables();
+  if (t === "Orders") bindOrderFilters();
   if (t === "Morning Brief") bindBriefCalendar();
   if (t === "Roll Advisor") bindRollAdvisorRefresh();
 }

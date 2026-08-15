@@ -60,13 +60,14 @@
       openOrders: {
         columns: [
           { field: "orderNumber", key: "order_id", label: "Order" },
+          { field: "date", key: "entered_at", label: "Entered" },
           { field: "status", label: "Status" },
+          { field: "orderType", key: "strategy", label: "Strategy" },
           { field: "symbol", label: "Symbol" },
-          { field: "quantity", label: "Quantity" },
-          { field: "orderType", key: "order_type", label: "Order Type" },
-          { field: "contract", key: "closing_contract", label: "Closing Contract" },
-          { field: "contract", key: "replacement_contract", label: "Replacement Contract" },
-          { field: "limitPrice", key: "net_credit_limit", label: "Net Credit Limit" },
+          { field: "quantity", key: "contracts", label: "Qty" },
+          { field: "instructions", key: "legs", label: "Option Legs" },
+          { field: "limitPrice", key: "limit_price", label: "Submitted Limit" },
+          { field: "text", key: "duration", label: "Duration" },
         ],
       },
       weeklyOpportunities: {
