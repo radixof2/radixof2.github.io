@@ -110,7 +110,6 @@ function applyTheme() {
       : themePreference;
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.bsTheme = resolved;
-  document.documentElement.style.colorScheme = resolved;
   themeButtons.forEach((button) => {
     const selected = button.dataset.themeChoice === themePreference;
     button.classList.toggle("active", selected);
@@ -136,13 +135,15 @@ themeMedia.addEventListener?.("change", () => {
   if (themePreference === "auto") applyTheme();
 });
 applyTheme();
-const money = (v) =>
+const moneyPlain = (v) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
     Number(v || 0),
   );
-const num = (v, d = 2) => (v == null ? "—" : Number(v).toFixed(d));
-const pct = (v) => (v == null ? "—" : (Number(v) * 100).toFixed(1) + "%");
-const risk = (v) => (v == null ? "N/A" : `${v}/100`);
+const numPlain = (v, d = 2) => (v == null ? "—" : Number(v).toFixed(d));
+const money = (v) => `<span class="mono">${moneyPlain(v)}</span>`;
+const num = (v, d = 2) => `<span class="mono">${numPlain(v, d)}</span>`;
+const pct = (v) => (v == null ? "—" : `<span class="mono">${(Number(v) * 100).toFixed(1)}%</span>`);
+const risk = (v) => (v == null ? "N/A" : `<span class="mono">${v}/100</span>`);
 const expiration = (v) => `<span class="expiration-date">${esc(v)}</span>`;
 const cls = (s) =>
   s?.startsWith("GREEN")
@@ -163,9 +164,15 @@ const esc = (v) =>
 const displayDate = (v) => {
   const text = String(v ?? "");
   const isoDate = text.match(/^\d{4}-\d{2}-\d{2}/);
-  return esc(isoDate ? isoDate[0] : text);
+  return `<span class="mono">${esc(isoDate ? isoDate[0] : text)}</span>`;
 };
 const displayRefreshTime = (value) => value ? new Date(value).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }) : "Not refreshed";
+const shortDate = (v) => {
+  const iso = String(v ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return esc(v);
+  return esc(new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${iso}T12:00:00Z`)));
+};
+const statusAction = (status) => esc(String(status || "").split(/[·-]/).pop().trim());
 const maskAccount = (value) => {
   const text = String(value ?? "");
   const digits = text.replace(/\D/g, "");
@@ -192,9 +199,9 @@ function briefCalendarDetail() {
   const position = S.positions[briefSelectedPositionIndex];
   if (!position)
     return '<div class="calendar-detail-empty"><div><b>Select a contract</b><p class="muted">Choose a color-coded calendar entry to review its current details here.</p></div></div>';
-  return `<div class="calendar-detail-header"><div><div class="label">Selected contract</div><h3>${esc(position.symbol)} · ${expiration(position.expiration)} · ${money(position.strike)}</h3></div><span class="pill ${cls(position.status)}">${esc(position.status)}</span></div><div class="calendar-detail-grid"><div><span class="label">Quantity</span><b>${position.contracts}</b></div><div><span class="label">DTE</span><b>${position.dte}</b></div><div><span class="label">Stock</span><b>${position.current_price == null ? "—" : money(position.current_price)}</b></div><div><span class="label">Delta</span><b>${num(position.delta)}</b></div><div><span class="label">Distance</span><b>${pct(position.distance_to_strike_pct)}</b></div><div><span class="label">Risk</span><b>${risk(position.risk_score)}</b></div></div><div class="calendar-detail-action"><span class="label">Current guidance</span><b>${esc(position.action)}</b><p>${esc(position.explanation)}</p></div>${tradeGuide(position)}`;
+  return `<div class="calendar-detail-header"><div><div class="label">Selected contract</div><h3>${esc(position.symbol)} $${numPlain(position.strike, 2)} call</h3><p class="calendar-detail-meta">${shortDate(position.expiration)} · ${statusAction(position.status)} · ${position.contracts} contract${position.contracts === 1 ? "" : "s"} · Risk ${risk(position.risk_score)}</p></div><span class="pill ${cls(position.status)}">${esc(position.status)}</span></div><div class="calendar-detail-grid"><div><span class="label">Quantity</span><b>${position.contracts}</b></div><div><span class="label">DTE</span><b>${position.dte}</b></div><div><span class="label">Stock</span><b>${position.current_price == null ? "—" : money(position.current_price)}</b></div><div><span class="label">Delta</span><b>${num(position.delta)}</b></div><div><span class="label">Distance</span><b>${pct(position.distance_to_strike_pct)}</b></div><div><span class="label">Risk</span><b>${risk(position.risk_score)}</b></div></div><div class="calendar-detail-action"><p>${esc(position.explanation)}</p></div>${tradeGuide(position)}`;
 }
-function briefCalendar() {
+function briefCalendarGrid() {
   const cursor = new Date(`${briefCalendarMonth}T12:00:00Z`);
   const year = cursor.getUTCFullYear();
   const month = cursor.getUTCMonth();
@@ -205,14 +212,16 @@ function briefCalendar() {
   }).format(cursor);
   const firstWeekday = new Date(Date.UTC(year, month, 1)).getUTCDay();
   const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const prevMonthDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const earningsByDate = Object.values(D.diagnostics?.earnings_calendar || {}).reduce((events, event) => {
     const eventDate = String(event?.event_date || "").slice(0, 10);
     if (eventDate) (events[eventDate] ||= []).push(event);
     return events;
   }, {});
+  const outsideDay = (day) => `<div class="calendar-day outside" aria-hidden="true"><div class="calendar-date"><span>${day}</span></div></div>`;
   const cells = [];
   for (let blank = 0; blank < firstWeekday; blank += 1)
-    cells.push('<div class="calendar-day outside" aria-hidden="true"></div>');
+    cells.push(outsideDay(prevMonthDays - firstWeekday + 1 + blank));
   for (let day = 1; day <= daysInMonth; day += 1) {
     const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     const entries = S.positions
@@ -225,14 +234,42 @@ function briefCalendar() {
       .join("")}${entries
       .map(
         ({ position, index }) =>
-          `<button type="button" class="calendar-event ${cls(position.status)}${index === briefSelectedPositionIndex ? " selected" : ""}" data-position-index="${index}" title="${esc(position.symbol)} ${esc(position.expiration)} $${num(position.strike, 2)} · ${esc(position.status)}"><span><b>${esc(position.symbol)}</b> $${num(position.strike, 0)} · ${position.contracts}c</span></button>`,
+          `<button type="button" class="calendar-event ${cls(position.status)}${index === briefSelectedPositionIndex ? " selected" : ""}" data-position-index="${index}" title="${esc(position.symbol)} ${esc(position.expiration)} $${numPlain(position.strike, 2)} · ${esc(position.status)}"><span><b>${esc(position.symbol)}</b> $${num(position.strike, 0)} · ${position.contracts}c</span></button>`,
       )
       .join("")}</div></div>`);
   }
-  while (cells.length % 7) cells.push('<div class="calendar-day outside" aria-hidden="true"></div>');
-  return `<section class="section card brief-calendar" aria-labelledby="briefCalendarTitle"><div class="calendar-pane"><div class="calendar-toolbar"><h2 id="briefCalendarTitle">${esc(monthLabel)}</h2><div class="calendar-controls"><button type="button" data-calendar-action="previous" aria-label="Previous month">‹</button><button type="button" class="calendar-today-button" data-calendar-action="today">Today</button><button type="button" data-calendar-action="next" aria-label="Next month">›</button></div></div><div class="calendar-legend"><span><i class="green"></i>Wait</span><span><i class="yellow"></i>Monitor</span><span><i class="red"></i>Action</span><span><i class="gray"></i>Settlement</span><span><i class="earnings"></i>Earnings</span></div><div class="calendar-scroll"><div class="calendar-weekdays" aria-hidden="true">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => `<span>${day}</span>`).join("")}</div><div class="calendar-grid">${cells.join("")}</div></div><p class="muted calendar-help">Select a contract to show its current guidance on the right. Colors reflect the latest refreshed status.</p></div><aside id="calendarDetail" class="calendar-detail" aria-live="polite">${briefCalendarDetail()}</aside></section>`;
+  // Always pad to a fixed six-week (42-cell) grid, not just the last partial
+  // week. Every month/starting-weekday combination fits within six weeks, so
+  // this keeps the calendar's height constant across months -- otherwise a
+  // full page re-render on month navigation reflows everything below/around
+  // it and the page visibly jumps.
+  let trailingDay = 1;
+  while (cells.length < 42) cells.push(outsideDay(trailingDay++));
+  return { monthLabel, cellsHtml: cells.join("") };
+}
+function briefCalendar() {
+  const { monthLabel, cellsHtml } = briefCalendarGrid();
+  return `<section class="section card brief-calendar" aria-labelledby="briefCalendarTitle"><div class="calendar-pane"><div class="calendar-toolbar"><h2 id="briefCalendarTitle">${esc(monthLabel)}</h2><div class="calendar-controls"><button type="button" data-calendar-action="previous" aria-label="Previous month">‹</button><button type="button" class="calendar-today-button" data-calendar-action="today">Today</button><button type="button" data-calendar-action="next" aria-label="Next month">›</button></div></div><div class="calendar-legend"><span><i class="green"></i>Wait</span><span><i class="yellow"></i>Monitor</span><span><i class="red"></i>Action</span><span><i class="gray"></i>Settlement</span><span><i class="earnings"></i>Earnings</span></div><div class="calendar-scroll"><div class="calendar-weekdays" aria-hidden="true">${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => `<span>${day}</span>`).join("")}</div><div class="calendar-grid">${cellsHtml}</div></div><p class="muted calendar-help">Select a contract to show its current guidance on the right. Colors reflect the latest refreshed status.</p></div><aside id="calendarDetail" class="calendar-detail" aria-live="polite">${briefCalendarDetail()}</aside></section>`;
+}
+function bindCalendarEvents() {
+  content.querySelectorAll(".calendar-event").forEach((button) => {
+    button.addEventListener("click", () => {
+      briefSelectedPositionIndex = Number(button.dataset.positionIndex);
+      content.querySelectorAll(".calendar-event").forEach((entry) =>
+        entry.classList.toggle("selected", entry === button),
+      );
+      const detail = document.getElementById("calendarDetail");
+      if (detail) detail.innerHTML = briefCalendarDetail();
+    });
+  });
 }
 function bindBriefCalendar() {
+  // Only the month title, the day cells, and the detail card actually need
+  // to change when navigating months. The toolbar buttons themselves, the
+  // legend, and the section/card chrome around them never change, so they're
+  // left completely untouched rather than torn down and rebuilt -- nothing
+  // above or around the calendar is disturbed, so there's nothing for the
+  // page to reflow or scroll relative to.
   content.querySelectorAll("[data-calendar-action]").forEach((button) => {
     button.addEventListener("click", () => {
       const action = button.dataset.calendarAction;
@@ -244,18 +281,21 @@ function bindBriefCalendar() {
         .filter(({ position }) => String(position.expiration).startsWith(monthPrefix))
         .sort((a, b) => String(a.position.expiration).localeCompare(String(b.position.expiration)) || (b.position.risk_score || 0) - (a.position.risk_score || 0));
       briefSelectedPositionIndex = visiblePositions[0]?.index ?? -1;
-      show("Morning Brief");
+      const { monthLabel, cellsHtml } = briefCalendarGrid();
+      const titleEl = document.getElementById("briefCalendarTitle");
+      if (titleEl) titleEl.textContent = monthLabel;
+      const gridEl = content.querySelector(".calendar-grid");
+      if (gridEl) gridEl.innerHTML = cellsHtml;
+      const detailEl = document.getElementById("calendarDetail");
+      if (detailEl) detailEl.innerHTML = briefCalendarDetail();
+      bindCalendarEvents();
     });
   });
-  content.querySelectorAll(".calendar-event").forEach((button) => {
-    button.addEventListener("click", () => {
-      briefSelectedPositionIndex = Number(button.dataset.positionIndex);
-      content.querySelectorAll(".calendar-event").forEach((entry) =>
-        entry.classList.toggle("selected", entry === button),
-      );
-      const detail = document.getElementById("calendarDetail");
-      if (detail) detail.innerHTML = briefCalendarDetail();
-    });
+  bindCalendarEvents();
+}
+function bindPriorityAction() {
+  content.querySelectorAll('[data-priority-action="roll-advisor"]').forEach((button) => {
+    button.addEventListener("click", () => show("Roll Advisor"));
   });
 }
 function table(headers, rows, options = {}) {
@@ -450,11 +490,35 @@ function bindDisclosures() {
     });
   });
 }
+function positionLifecycleRails() {
+  content.querySelectorAll(".lifecycle-waterfall").forEach((waterfall) => {
+    const rail = waterfall.querySelector(":scope > .lifecycle-rail");
+    const dots = [...waterfall.querySelectorAll(":scope > .lifecycle-step .tree-toggle")];
+    if (!rail) return;
+    if (!dots.length) { rail.style.display = "none"; return; }
+    const waterfallTop = waterfall.getBoundingClientRect().top;
+    const lastDot = dots[dots.length - 1].getBoundingClientRect();
+    const lastY = lastDot.top + lastDot.height / 2 - waterfallTop;
+    rail.style.display = "block";
+    rail.style.top = "0px";
+    rail.style.height = `${Math.max(0, lastY)}px`;
+  });
+}
+function bindLifecycleWaterfalls() {
+  positionLifecycleRails();
+  content.querySelectorAll(".roll-chain").forEach((chain) => {
+    if (chain.dataset.railBound) return;
+    chain.dataset.railBound = "1";
+    chain.addEventListener("toggle", () => { if (chain.open) positionLifecycleRails(); });
+  });
+}
 const financial = (value) => `<span class="${Number(value) < 0 ? "negative-value" : ""}">${money(value)}</span>`;
 const withdrawal = (value) => financial(-Math.abs(Number(value || 0)));
 function rollTargetText() {
-  let r = D.settings?.decision_rules || {};
-  return `${num(r.target_roll_delta_min, 2)}–${num(r.target_roll_delta_max, 2)} delta`;
+  // The screening band actually applied by Roll Advisor lives under
+  // roll_advisor.preferred_delta_min/max, not decision_rules.
+  let r = D.settings?.roll_advisor || {};
+  return `${num(r.preferred_delta_min, 2)}–${num(r.preferred_delta_max, 2)} delta`;
 }
 function tradeGuide(r, compact = false) {
   const state = cls(r.status),
@@ -498,7 +562,7 @@ function donutChart(segments, center, caption, ariaLabel) {
     let offset=0;
     return items.map((segment) => {
       const value=Math.max(0,Math.min(100,Number(segment.value || 0)));
-      const circle=`<circle class="donut-${prefix}-${esc(segment.tone)}" cx="50" cy="50" r="${radius}" pathLength="100" stroke-dasharray="${num(value,2)} ${num(100-value,2)}" stroke-dashoffset="${num(-offset,2)}" stroke-width="${width}"></circle>`;
+      const circle=`<circle class="donut-${prefix}-${esc(segment.tone)}" cx="50" cy="50" r="${radius}" pathLength="100" stroke-dasharray="${numPlain(value,2)} ${numPlain(100-value,2)}" stroke-dashoffset="${numPlain(-offset,2)}" stroke-width="${width}"></circle>`;
       offset+=value;
       return circle;
     }).join("");
@@ -528,21 +592,21 @@ function brief() {
     monthlyOverage = Math.max(monthlyPremium - monthlyTarget, 0);
   let attention = (c.red || 0) + (c.yellow || 0),
     focus = attention
-      ? `${attention} position${attention === 1 ? "" : "s"} need${attention === 1 ? "s" : ""} attention${hi ? " · Start with " + hi.symbol + " $" + num(hi.strike, 0) : ""}`
+      ? `${attention} position${attention === 1 ? "" : "s"} need${attention === 1 ? "s" : ""} attention today`
       : "No action required today";
   const tieNote = hi && q.highest_risk_tie_count > 1 ? `<div class="muted">${q.highest_risk_tie_count} active positions share risk ${risk(hi.risk_score)}; ranked by ITM status, delta, strike proximity, then DTE.</div>` : "";
   const priorityState = hi ? cls(hi.status) : "green";
-  const priorityTitle = hi ? `${hi.symbol} · ${expiration(hi.expiration)} · ${money(hi.strike)}` : "Portfolio clear";
-  const priorityGuidance = hi ? hi.action : "No active trading action is required.";
+  const priorityTitle = hi ? `${esc(hi.symbol)} $${numPlain(hi.strike, 0)} call, ${shortDate(hi.expiration)}` : "Portfolio clear";
+  const priorityGuidance = hi ? hi.explanation || hi.action : "No active trading action is required.";
   const healthCount=(c.green || 0)+(c.yellow || 0)+(c.red || 0);
   const healthTotal=Math.max(1,healthCount);
   const healthSegments=[{tone:"green",value:(c.green || 0)*100/healthTotal},{tone:"yellow",value:(c.yellow || 0)*100/healthTotal},{tone:"red",value:(c.red || 0)*100/healthTotal}];
   const premiumSegments = targetProgress > 100
     ? [{tone:"green",value:10000/targetProgress},{tone:"over",value:100-(10000/targetProgress)}]
     : [{tone:"green",value:targetProgress},{tone:"red",value:100-targetProgress}];
-  const premiumDonut=donutChart(premiumSegments,`${num(targetProgress,0)}%`,"of target",`${num(targetProgress,1)}% of monthly premium target earned`);
+  const premiumDonut=donutChart(premiumSegments,`${numPlain(targetProgress,0)}%`,"of target",`${numPlain(targetProgress,1)}% of monthly premium target earned`);
   const healthDonut=donutChart(healthSegments,healthCount ? `${c.green || 0}/${healthCount}` : "0","healthy",`${c.green || 0} green, ${c.yellow || 0} yellow, and ${c.red || 0} red active positions`);
-  const leadCard = `<div class="card command-priority ${priorityState}-command"><div class="command-priority-top"><span class="label">Today’s priority</span><span class="pill ${priorityState}">${hi ? `${esc(hi.status)} · ${risk(hi.risk_score)}` : "All clear"}</span></div><div class="command-priority-main"><div><div class="command-priority-title">${priorityTitle}</div><p>${esc(priorityGuidance)}</p></div><div class="command-priority-metrics"><span><b>${hi ? hi.dte : "—"}</b>DTE</span><span><b>${hi ? num(hi.delta, 2) : "—"}</b>Delta</span><span><b>${attention}</b>Need attention</span></div></div>${tieNote}<div class="command-priority-footer"><span>${esc(focus)}</span><span>Review details below ↓</span></div></div>`;
+  const leadCard = `<div class="card command-priority ${priorityState}-command"><div class="command-priority-top"><span class="label">Highest active risk${hi ? ` · ${statusAction(hi.status)}` : ""}</span></div><div class="command-priority-main"><div class="command-priority-title">${priorityTitle}</div><p>${esc(priorityGuidance)}</p></div>${tieNote}<div class="command-priority-metrics"><span><b>${hi ? hi.dte : "—"}</b>DTE</span><span><b>${hi ? num(hi.delta, 2) : "—"}</b>Delta</span><span><b>${hi ? pct(hi.distance_to_strike_pct) : "—"}</b>Distance</span><span><b>${hi ? hi.contracts : "—"}</b>Contracts</span></div><div class="command-priority-footer"><span>${esc(focus)}</span>${hi ? `<button type="button" class="priority-link" data-priority-action="roll-advisor">Open Roll Advisor →</button>` : `<span>Review details below ↓</span>`}</div></div>`;
   const metricCards = [
     `<div class="card command-metric command-chart-card"><div class="label">Premium earned</div><div class="command-chart-body">${premiumDonut}<div class="command-chart-detail"><b>${money(monthlyPremium)}</b><span class="metric-target">Target ${money(monthlyTarget)}</span><span class="${monthlyOverage ? "positive-value" : "negative-value"}">${monthlyOverage ? `Above Target ${money(monthlyOverage)}` : `Gap ${money(monthlyGap)}`}</span><span class="annual-premium ${trailingNetOptionCash >= 0 ? "positive-value" : "negative-value"}">1Y: ${money(trailingNetOptionCash)}</span></div></div></div>`,
     `<div class="card command-metric command-chart-card"><div class="label">Portfolio health</div><div class="command-chart-body">${healthDonut}<div class="health-pills command-chart-legend"><span class="health-pill green"><b>${c.green || 0}</b> Green</span><span class="health-pill yellow"><b>${c.yellow || 0}</b> Yellow</span><span class="health-pill red"><b>${c.red || 0}</b> Red</span></div></div></div>`,
@@ -581,24 +645,32 @@ function coveredCallsTable(rows = S.positions, groupByAccount = false, tableOpti
   return accountGroupedTable(groupedRows, headers, (r) => renderRow(r, false), true, "positions-covered-calls", options);
 }
 
+const weekdayName = (iso) =>
+  iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }) : "";
+
 function weeklyOpportunitySection(symbolRecommendation) {
   const weekly = symbolRecommendation.weekly_opportunities || {},
     rows = weekly.suggestions || [];
   if (!weekly.enabled) return "";
+  const orderSize = weekly.contracts_per_order || 1;
+  const entryDay = weekdayName(weekly.entry_date) || "planned entry day";
+  const expirationDay = weekdayName(weekly.expiration) || "expiration day";
   const content = rows.length
     ? table(
         ["Quote date", "Planned entry", "Expiration", "Qty", "Bucket", "Strike", "Delta", "Bid/share", "Expected premium", "Spread", "Score", "Risk"],
-        rows.map((row) => `<tr><td>${expiration(row.quote_date)}</td><td>${expiration(row.entry_date)}</td><td>${expiration(row.expiration)}</td><td><b>1</b></td><td>${esc(row.bucket)}</td><td>${money(row.strike)}</td><td>${num(row.delta, 3)}</td><td>${money(row.bid)}</td><td>${money(row.expected_premium)}</td><td>${row.spread_pct == null ? "—" : num(row.spread_pct, 2) + "%"}</td><td><b>${num(row.score, 1)}</b></td><td>${esc(row.risk_level)}</td></tr>`),
+        rows.map((row) => `<tr><td>${expiration(row.quote_date)}</td><td>${expiration(row.entry_date)}</td><td>${expiration(row.expiration)}</td><td><b>${row.contracts ?? orderSize}</b></td><td>${esc(row.bucket)}</td><td>${money(row.strike)}</td><td>${num(row.delta, 3)}</td><td>${money(row.bid)}</td><td>${money(row.expected_premium)}</td><td>${row.spread_pct == null ? "—" : num(row.spread_pct, 2) + "%"}</td><td><b>${num(row.score, 1)}</b></td><td>${esc(row.risk_level)}</td></tr>`),
         { schema: "weeklyOpportunities" },
       )
     : `<div class="empty">${esc(weekly.status || "No weekly opportunities are available.")}${weekly.next_entry_date ? ` · Next review ${expiration(weekly.next_entry_date)}` : ""}</div>`;
-  const capacityNotice = weekly.over_policy_by > 0
+  const capacityNotice = weekly.capacity_enforced
+    ? `<div class="instruction-note"><b>Policy context:</b> ${weekly.active_contracts} active contracts versus policy maximum ${weekly.policy_max_contracts}, ${weekly.available_capacity} available. Suggested order size is capped to available capacity.</div>`
+    : weekly.over_policy_by > 0
     ? `<div class="red-note"><b>Above policy:</b> ${weekly.active_contracts} active contracts versus policy maximum ${weekly.policy_max_contracts} — ${weekly.over_policy_by} over. Weekly suggestions remain visible but are not capacity-filtered.</div>`
     : `<div class="instruction-note"><b>Policy context:</b> ${weekly.active_contracts} active contracts versus policy maximum ${weekly.policy_max_contracts}. Weekly suggestions are not capacity-filtered.</div>`;
   const timing = weekly.preview
-    ? `These are previews for entry on ${expiration(weekly.entry_date)} using quotes from ${expiration(weekly.quote_date)}. Refresh Data on the planned Monday before placing an order.`
-    : "These use today’s Monday quotes for this Friday. Confirm the live quote immediately before placing an order.";
-  return `<div class="section"><h3>Monday-to-Friday weekly opportunities</h3><p class="muted">Independent one-contract ideas for small additional premium, including after the monthly target is exceeded. OTM, delta-bucket, earnings, liquidity, spread, and read-only safeguards still apply. Capacity is informational for this weekly list; each row is a separate one-contract order and operator discipline is required. <b>${timing}</b></p>${capacityNotice}${content}</div>`;
+    ? `These are previews for entry on ${expiration(weekly.entry_date)} using quotes from ${expiration(weekly.quote_date)}. Refresh Data on the planned ${entryDay} before placing an order.`
+    : `These use today’s ${entryDay} quotes for this ${expirationDay}. Confirm the live quote immediately before placing an order.`;
+  return `<div class="section"><h3>${entryDay}-to-${expirationDay} weekly opportunities</h3><p class="muted">Independent ${orderSize}-contract ideas for small additional premium, including after the monthly target is exceeded. OTM, delta-bucket, earnings, liquidity, spread, and read-only safeguards still apply. ${weekly.capacity_enforced ? "Capacity is enforced for this weekly list." : "Capacity is informational for this weekly list; operator discipline is required."} <b>${timing}</b></p>${capacityNotice}${content}</div>`;
 }
 function recommendations() {
   const R = D.recommendations || {};
@@ -658,7 +730,7 @@ function policy() {
     ],
     Object.entries(syms).map(
       ([k, v]) =>
-        `<tr><td><b>${esc(k)}</b></td><td>${Number(v.shares_owned || 0).toLocaleString()}</td><td>${v.max_active_contracts}</td><td>${Number(v.max_active_contracts || 0) * 100}</td><td>${num(((Number(v.max_active_contracts || 0) * 100) / Math.max(1, Number(v.shares_owned || 0))) * 100, 1)}%</td></tr>`,
+        `<tr><td><b>${esc(k)}</b></td><td><span class="mono">${Number(v.shares_owned || 0).toLocaleString()}</span></td><td><span class="mono">${v.max_active_contracts}</span></td><td><span class="mono">${Number(v.max_active_contracts || 0) * 100}</span></td><td>${num(((Number(v.max_active_contracts || 0) * 100) / Math.max(1, Number(v.shares_owned || 0))) * 100, 1)}%</td></tr>`,
     ),
     { schema: "policySymbolLimits" },
   )}</div><div class="section"><h2>Risk distribution</h2>${table(
@@ -838,11 +910,11 @@ function rollLineageTree(rolls, contracts) {
   };
   const openingDetails = (node, rows, incomingRoll) => {
     const outcome = rows[0] || {};
-    const identity = incomingRoll ? "" : `<span><b>Symbol</b>${esc(node.symbol)}</span><span><b>Contracts</b>${Number(outcome.contracts ?? node.contracts ?? 0)}</span>`;
-    return `<div class="roll-contract-details">${identity}<span><b>Expiration</b>${esc(node.expiration)}</span><span><b>Strike</b>${money(node.strike)}</span><span><b>Opened</b>${displayDate(outcome.opened_at || incomingRoll?.date)}</span><span><b>Opening credit/share</b>${outcome.premium_received == null ? (incomingRoll?.sell_to_open == null ? "—" : money(incomingRoll.sell_to_open)) : money(outcome.premium_received)}</span><span><b>Opening fees</b>${outcome.opening_fees == null ? (incomingRoll?.sto_fees == null ? "—" : money(incomingRoll.sto_fees)) : money(outcome.opening_fees)}</span>${incomingRoll ? `<span><b>BTC fill/share</b>${money(incomingRoll.buy_to_close)}</span><span><b>BTC fees</b>${incomingRoll.btc_fees == null ? "—" : money(incomingRoll.btc_fees)}</span><span><b>STO fill/share</b>${money(incomingRoll.sell_to_open)}</span><span><b>STO fees</b>${incomingRoll.sto_fees == null ? "—" : money(incomingRoll.sto_fees)}</span><span><b>Net roll cash</b>${financial(incomingRoll.net_cash_total == null ? incomingRoll.net_credit_total : incomingRoll.net_cash_total)}</span><span><b>Roll date</b>${displayDate(incomingRoll.date)}</span>` : ""}</div>`;
+    const identity = incomingRoll ? "" : `<span><b>Symbol</b>${esc(node.symbol)}</span><span><b>Contracts</b><span class="mono">${Number(outcome.contracts ?? node.contracts ?? 0)}</span></span>`;
+    return `<div class="roll-contract-details">${identity}<span><b>Expiration</b><span class="mono">${esc(node.expiration)}</span></span><span><b>Strike</b>${money(node.strike)}</span><span><b>Opened</b>${displayDate(outcome.opened_at || incomingRoll?.date)}</span><span><b>Opening credit/share</b>${outcome.premium_received == null ? (incomingRoll?.sell_to_open == null ? "—" : money(incomingRoll.sell_to_open)) : money(outcome.premium_received)}</span><span><b>Opening fees</b>${outcome.opening_fees == null ? (incomingRoll?.sto_fees == null ? "—" : money(incomingRoll.sto_fees)) : money(outcome.opening_fees)}</span>${incomingRoll ? `<span><b>BTC fill/share</b>${money(incomingRoll.buy_to_close)}</span><span><b>BTC fees</b>${incomingRoll.btc_fees == null ? "—" : money(incomingRoll.btc_fees)}</span><span><b>STO fill/share</b>${money(incomingRoll.sell_to_open)}</span><span><b>STO fees</b>${incomingRoll.sto_fees == null ? "—" : money(incomingRoll.sto_fees)}</span><span><b>Net roll cash</b>${financial(incomingRoll.net_cash_total == null ? incomingRoll.net_credit_total : incomingRoll.net_cash_total)}</span><span><b>Roll date</b>${displayDate(incomingRoll.date)}</span>` : ""}</div>`;
   };
   const terminalDetails = (outcome) => `<div class="roll-contract-details"><span><b>Outcome</b>${esc(outcome?.requires_reconciliation ? "Outcome pending · expiration or assignment not yet identified" : String(outcome?.close_reason || outcome?.status || "Unknown").replaceAll("_", " ").toLowerCase())}</span><span><b>Closed</b>${displayDate(outcome?.closed_at)}</span><span><b>Closing cost/share</b>${outcome?.closing_cost == null ? "—" : money(outcome.closing_cost)}</span><span><b>Closing fees</b>${outcome?.closing_fees == null ? "—" : money(outcome.closing_fees)}</span><span><b>Contract-stage P/L</b>${outcome?.realized_premium == null ? "—" : financial(outcome.realized_premium)}</span></div>`;
-  const contractEventHeader = (node, eventLabel, disclosure = false, lifecyclePnl = null) => `<div class="roll-contract"><span class="${disclosure ? "disclosure-toggle" : "tree-toggle"}" aria-hidden="true">${disclosure ? "" : "•"}</span><span class="pill ${eventLabel === "ROLLED" ? "yellow" : "gray"}">${esc(eventLabel)}</span><b>${esc(node.symbol)} ${expiration(node.expiration)} · ${money(node.strike)}</b>${lifecyclePnl == null ? "" : `<span class="lifecycle-root-pnl"><b>Net lifecycle P/L</b>${financial(lifecyclePnl)}</span>`}</div>`;
+  const contractEventHeader = (node, eventLabel, disclosure = false, lifecyclePnl = null, breadcrumb = null) => `<div class="roll-contract"><span class="${disclosure ? "disclosure-toggle" : "tree-toggle"}" aria-hidden="true"></span><span class="pill ${eventLabel === "ROLLED" ? "yellow" : "gray"}">${esc(eventLabel)}</span><b>${esc(node.symbol)} ${expiration(node.expiration)} · ${money(node.strike)}</b>${breadcrumb ? `<span class="lifecycle-breadcrumb">${esc(breadcrumb)}</span>` : ""}${lifecyclePnl == null ? "" : `<span class="lifecycle-root-pnl"><b>Net lifecycle P/L</b>${financial(lifecyclePnl)}</span>`}</div>`;
   const renderContractEvent = (key, eventLabel, incomingRoll = null) => {
     const node = nodes.get(key), outcomeRows = outcomes.get(key) || [];
     if (!node) return "";
@@ -851,7 +923,7 @@ function rollLineageTree(rolls, contracts) {
   const renderTerminalEvents = (key) => {
     const node = nodes.get(key), terminal = terminalLabel(key);
     if (!node || !terminal || terminal === "Opened" || terminal === "Opened / outcome unknown") return "";
-    return (outcomes.get(key) || []).map((outcome) => `<div class="lifecycle-step"><div class="roll-tree-node"><div class="roll-contract"><span class="tree-toggle" aria-hidden="true">•</span><span class="pill ${cls(terminal.toUpperCase())}">${esc(terminal.toUpperCase())}</span><b>${esc(node.symbol)} ${expiration(node.expiration)} · ${money(node.strike)}</b></div>${terminalDetails(outcome)}</div></div>`).join("");
+    return (outcomes.get(key) || []).map((outcome) => `<div class="lifecycle-step"><div class="roll-tree-node"><div class="roll-contract"><span class="tree-toggle" aria-hidden="true"></span><span class="pill ${cls(terminal.toUpperCase())}">${esc(terminal.toUpperCase())}</span><b>${esc(node.symbol)} ${expiration(node.expiration)} · ${money(node.strike)}</b></div>${terminalDetails(outcome)}</div></div>`).join("");
   };
   const renderProgression = (key, path = new Set()) => {
     if (path.has(key)) return '<div class="warning-box">Cycle detected in roll history.</div>';
@@ -868,13 +940,27 @@ function rollLineageTree(rolls, contracts) {
     const terminal = terminalLabel(key);
     return terminal && terminal !== "Opened" && terminal !== "Opened / outcome unknown" && terminal !== "Outcome pending" ? "CLOSED" : "OPENED";
   };
-  const lifecycleEventCount = (key, path = new Set()) => {
-    if (path.has(key)) return 0;
+  // Breadcrumb of every phase a contract passed through (e.g. OPENED, ROLLED,
+  // EXPIRED), shown in the collapsed header row so the summary is visible
+  // without expanding the waterfall below it.
+  const lifecyclePhases = (key, path = new Set()) => {
+    if (path.has(key)) return [];
     const nextPath = new Set(path); nextPath.add(key);
     const edges = children.get(key) || [];
-    if (edges.length) return 1 + edges.reduce((sum, { childKey }) => sum + lifecycleEventCount(childKey, nextPath), 0);
+    if (edges.length) return ["ROLLED", ...lifecyclePhases(edges[0].childKey, nextPath)];
     const terminal = terminalLabel(key);
-    return 1 + (terminal && terminal !== "Opened" && terminal !== "Opened / outcome unknown" ? (outcomes.get(key) || []).length : 0);
+    return terminal && terminal !== "Opened" && terminal !== "Opened / outcome unknown" && terminal !== "Outcome pending"
+      ? [terminal.toUpperCase()]
+      : [];
+  };
+  const phaseBreadcrumb = (phases) => {
+    const collapsed = [];
+    for (const phase of phases) {
+      const last = collapsed[collapsed.length - 1];
+      if (last && last.label === phase) last.count += 1;
+      else collapsed.push({ label: phase, count: 1 });
+    }
+    return collapsed.map(({ label, count }) => (count > 1 ? `${label} ×${count}` : label)).join(" / ");
   };
   const lifecycleTotalPnl = (key, path = new Set()) => {
     if (path.has(key)) return 0;
@@ -890,12 +976,26 @@ function rollLineageTree(rolls, contracts) {
   const assigned = (contracts || []).filter((row) => row.status === "ASSIGNED").reduce((sum, row) => sum + Number(row.contracts || 0), 0);
   const rolledContracts = (rolls || []).reduce((sum, row) => sum + Number(row.contracts || 0), 0);
   const metrics = `<div class="summary-cards summary-cards-4"><div class="card"><div class="label">Detected roll events</div><div class="value">${rolls.length}</div><p>Linked BTC/STO transactions.</p></div><div class="card"><div class="label">Rolled contract-events</div><div class="value">${rolledContracts}</div><p>A contract rolled more than once is counted each time.</p></div><div class="card"><div class="label">Expired unassigned</div><div class="value">${expired}</div><p>Contracts with a confirmed expired outcome.</p></div><div class="card"><div class="label">Assigned</div><div class="value">${assigned}</div><p>Contracts with a confirmed assignment outcome.</p></div></div>`;
-  roots.sort((a, b) => String(nodes.get(b)?.expiration || "").localeCompare(String(nodes.get(a)?.expiration || "")) || String((outcomes.get(b) || [])[0]?.opened_at || "").localeCompare(String((outcomes.get(a) || [])[0]?.opened_at || "")));
+  // Open contracts are the actionable ones, so they lead, soonest expiration
+  // first (most urgent). Closed contracts follow, most recent first so the
+  // oldest history settles to the bottom. Symbol is the final tiebreak.
+  const rootStatus = new Map(roots.map((key) => [key, lifecycleRootLabel(key)]));
+  roots.sort((a, b) => {
+    const statusA = rootStatus.get(a), statusB = rootStatus.get(b);
+    if (statusA !== statusB) return statusA === "OPENED" ? -1 : 1;
+    const expA = String(nodes.get(a)?.expiration || ""), expB = String(nodes.get(b)?.expiration || "");
+    const expirationCompare = statusA === "OPENED" ? expA.localeCompare(expB) : expB.localeCompare(expA);
+    if (expirationCompare) return expirationCompare;
+    return String(nodes.get(a)?.symbol || "").localeCompare(String(nodes.get(b)?.symbol || ""));
+  });
   const renderLifecycle = (key) => {
     const node = nodes.get(key);
     const progression = renderProgression(key);
-    const rootLabel = lifecycleRootLabel(key), expanded = rootLabel !== "CLOSED" || lifecycleEventCount(key) > 2;
-    return `<details class="roll-chain"${expanded ? " open" : ""}><summary>${contractEventHeader(node, rootLabel, true, rootLabel === "CLOSED" ? lifecycleTotalPnl(key) : null)}</summary><div class="roll-tree">${openingDetails(node, outcomes.get(key) || [], null)}${progression ? `<div class="lifecycle-waterfall">${progression}</div>` : ""}</div></details>`;
+    const rootLabel = lifecycleRootLabel(key);
+    const phases = ["OPENED", ...lifecyclePhases(key)];
+    const breadcrumb = phases.length > 1 ? phaseBreadcrumb(phases) : null;
+    const openedStep = `<div class="lifecycle-step"><div class="roll-tree-node"><div class="roll-contract"><span class="tree-toggle" aria-hidden="true"></span><span class="pill gray">OPENED</span><b>${esc(node.symbol)} ${expiration(node.expiration)} · ${money(node.strike)}</b></div>${openingDetails(node, outcomes.get(key) || [], null)}</div></div>`;
+    return `<details class="roll-chain"><summary>${contractEventHeader(node, rootLabel, true, rootLabel === "CLOSED" ? lifecycleTotalPnl(key) : null, breadcrumb)}</summary><div class="roll-tree"><div class="lifecycle-waterfall"><div class="lifecycle-rail" aria-hidden="true"></div>${openedStep}${progression}</div></div></details>`;
   };
   const accountRoots = new Map();
   roots.forEach((key) => {
@@ -1050,11 +1150,15 @@ function orders() {
 }
 function decisionRulesTable() {
   let r = D.settings?.decision_rules || {};
+  let roll = D.settings?.roll_advisor || {};
   let rows = [
     ["GREEN", "Risk score 0–" + r.green_max, "No immediate action"],
     [
       "YELLOW",
-      "Risk score " + (r.green_max + 1) + "–" + r.yellow_max,
+      // Yellow has no separate configured ceiling; it's simply everything
+      // between green and red, derived from red_min so it can never drift
+      // out of sync with the actual green_max/red_min classification.
+      "Risk score " + (r.green_max + 1) + "–" + (r.red_min - 1),
       "Monitor daily and price roll choices",
     ],
     [
@@ -1069,7 +1173,9 @@ function decisionRulesTable() {
     ],
     [
       "Roll target",
-      "Delta " + r.target_roll_delta_min + "–" + r.target_roll_delta_max,
+      // The screening band actually applied by Roll Advisor lives under
+      // roll_advisor.preferred_delta_min/max, not decision_rules.
+      "Delta " + roll.preferred_delta_min + "–" + roll.preferred_delta_max,
       "Screened from the Schwab option chain",
     ],
   ];
@@ -1089,7 +1195,7 @@ function setup() {
     ["Application", a.name],
     ["Version", appVersion],
     ["Mode", a.mode === "demo" ? "Schwab (Demo)" : "Schwab"],
-    ["Monthly income target", money(a.monthly_income_target)],
+    ["Monthly income target", moneyPlain(a.monthly_income_target)],
     ["Default account", a.default_account],
     ["System of record", a.mode === "schwab" ? "Schwab" : "Synthetic demo scenario"],
     ["Demo scenario", f.demo_scenario || f.demo_positions],
@@ -1126,22 +1232,46 @@ const views = {
   Setup: setup,
   Security: security,
 };
-function commandStatusBar(tab) {
-  const clock=S.market_clock || {};
-  const mode=demoMode ? "Schwab Demo" : "Schwab Live";
-  return `<div class="command-statusbar"><span class="command-live-dot ${String(clock.session || "").toLowerCase() === "open" ? "market-open" : ""}" aria-hidden="true"></span><b>${esc(clock.session || "Market status unknown")}</b><span>${esc(clock.now_market || clock.market_date || "")}</span><span class="command-status-separator"></span><span>${esc(mode)}</span><span>Data ${esc(displayRefreshTime(S.generated_at))}</span></div>`;
+const tabKickers = {
+  "Morning Brief": "Today",
+  "Roll Advisor": "Decision workspace",
+  Recommendations: "Opportunities",
+  Positions: "Portfolio",
+  Orders: "Broker activity",
+  History: "Ledger",
+  Policy: "Configuration",
+  Diagnostics: "System",
+  Setup: "Operations",
+  Security: "Trust boundary",
+};
+function sessionLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) return "Market status unknown";
+  const titled = text.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return `${titled} session`;
 }
+function renderTopBarStatus() {
+  const clock = S.market_clock || {};
+  const dot = document.getElementById("topBarDot");
+  const sessionEl = document.getElementById("topBarSession");
+  const modeEl = document.getElementById("topBarMode");
+  if (dot) dot.classList.toggle("market-open", String(clock.session || "").toLowerCase() === "open");
+  if (sessionEl) sessionEl.textContent = sessionLabel(clock.session);
+  if (modeEl) modeEl.textContent = demoMode ? "Schwab · Demo" : "Schwab · Live";
+}
+renderTopBarStatus();
 function show(t) {
   [...nav.children].forEach((b) =>
     b.classList.toggle("active", b.dataset.tab === t),
   );
-  content.innerHTML = `${commandStatusBar(t)}<div class="pp-page-header"><div><span class="pp-page-kicker">PortfolioPilot</span><h2>${esc(t)}</h2><p>${esc(tabDescriptions[t] || "")}</p></div><span class="pp-page-version">v${esc(appVersion)}</span></div><div class="command-surface">${views[t]()}</div>`;
+  content.innerHTML = `<div class="pp-page-header"><div><span class="pp-page-kicker">${esc(tabKickers[t] || "PortfolioPilot")}</span><h2>${esc(t)}</h2><p>${esc(tabDescriptions[t] || "")}</p></div><span class="pp-page-version">v${esc(appVersion)}</span></div><div class="command-surface">${views[t]()}</div>`;
   location.hash = t.replaceAll(" ", "-").toLowerCase();
   bindDisclosures();
   bindResizableTables();
   if (t === "Orders") bindOrderFilters();
-  if (t === "Morning Brief") bindBriefCalendar();
+  if (t === "Morning Brief") { bindBriefCalendar(); bindPriorityAction(); }
   if (t === "Roll Advisor") bindRollAdvisorRefresh();
+  if (t === "History") bindLifecycleWaterfalls();
 }
 tabs.forEach((t) => {
   let b = document.createElement("button");

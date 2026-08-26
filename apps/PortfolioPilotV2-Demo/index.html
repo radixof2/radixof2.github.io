@@ -5,26 +5,25 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1"><!--CCDC_SESSION_META-->
     <meta name="color-scheme" content="light dark">
-    <title>PortfolioPilot v2.4.1</title>
-    <link rel="stylesheet" href="vendor/tabler/tabler.min.css">
+    <title>PortfolioPilot v2.4.5</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="auto_refresh.css">
 </head>
 
-<body class="layout-fluid">
+<body>
     <div class="app-chrome">
-    <header class="navbar navbar-dark pp-header">
+    <header class="pp-header">
         <div class="brand-label">
             <div class="brand-mark" aria-hidden="true">P</div>
-            <div><div class="eyebrow">PORTFOLIO DECISION PLATFORM</div>
+            <div><div class="eyebrow">DECISION PLATFORM</div>
             <h1>PortfolioPilot</h1></div>
         </div>
-        <button id="navCollapseButton" class="nav-collapse-button" type="button" aria-label="Collapse navigation" aria-expanded="true" title="Collapse navigation"><span aria-hidden="true">‹</span></button>
     </header>
-    <nav id="tabs" class="navbar pp-tabs" aria-label="PortfolioPilot sections"></nav>
+    <nav id="tabs" class="pp-tabs" aria-label="PortfolioPilot sections"></nav>
     <div class="sidebar-controls">
         <div class="sidebar-control-label">Appearance</div>
         <div class="sidebar-control-row">
+            <button id="navCollapseButton" class="nav-collapse-button" type="button" aria-label="Collapse navigation" aria-expanded="true" title="Collapse navigation"><span aria-hidden="true">‹</span></button>
             <div id="themeSwitch" class="theme-switch" role="radiogroup" aria-label="Color theme">
                 <button type="button" data-theme-choice="auto" role="radio" aria-label="Auto theme"
                     aria-checked="true"><span aria-hidden="true">◐</span></button>
@@ -33,14 +32,23 @@
                 <button type="button" data-theme-choice="dark" role="radio" aria-label="Dark theme"
                     aria-checked="false"><span aria-hidden="true">☾</span></button>
             </div>
+        </div>
+    </div>
+    </div>
+    <div id="topBar" class="top-bar">
+        <div class="top-bar-status" aria-live="polite">
+            <span id="topBarDot" class="command-live-dot" aria-hidden="true"></span>
+            <b id="topBarSession">Market status unknown</b>
+            <span class="top-bar-sep" aria-hidden="true"></span>
+            <span id="topBarMode"></span>
+            <span class="top-bar-sep" aria-hidden="true"></span>
+            <span id="refreshTime"></span>
+        </div>
+        <div class="top-bar-actions">
+            <span id="refreshStatus" class="refresh-status" aria-live="polite"></span>
             <button id="refreshButton" class="refresh-button" type="button"
                 hidden><span class="refresh-button-label">Refresh Data</span></button>
         </div>
-        <div class="refresh-cluster">
-            <div id="refreshTime" class="muted"></div>
-            <div id="refreshStatus" class="refresh-status" aria-live="polite"></div>
-        </div>
-    </div>
     </div>
     <main id="content" class="page-wrapper"></main>
     <footer class="footer">
@@ -48,7 +56,6 @@
       <span>© <span id="copyrightYear">2026</span> PortfolioPilot contributors · Licensed under the MIT License</span>
     </footer>
     <script src="dashboard_data.js"></script>
-    <script src="vendor/tabler/tabler.min.js"></script>
     <script src="presentation_schema.js"></script>
     <script src="demo_dates.js"></script>
     <script src="app.js"></script>
